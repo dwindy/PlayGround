@@ -1,0 +1,1 @@
+/usr/bin/c++  -g   CMakeFiles/BA_Plane.dir/main.cpp.o  -o BA_Plane  -Wl,-rpath,/home/xin/Desktop/playground/BA_Plane/g2o/lib ../g2o/lib/libg2o.so 
