@@ -1,0 +1,12 @@
+/snap/clion/139/bin/cmake/linux/bin/cmake -DCMAKE_BUILD_TYPE=Debug -G "CodeBlocks - Unix Makefiles" /home/xin/Desktop/playground/ICL_NUIM/VaFRIC_data_reader
+-- Found OpenMP_C: -fopenmp  
+-- Found OpenMP_CXX: -fopenmp  
+-- Found OpenMP: TRUE   
+CMake Error at CMakeModules/FindCVD.cmake:37 (MESSAGE):
+  Could not find CVD
+Call Stack (most recent call first):
+  CMakeLists.txt:22 (FIND_PACKAGE)
+
+
+-- Configuring incomplete, errors occurred!
+See also "/home/xin/Desktop/playground/ICL_NUIM/VaFRIC_data_reader/cmake-build-debug/CMakeFiles/CMakeOutput.log".

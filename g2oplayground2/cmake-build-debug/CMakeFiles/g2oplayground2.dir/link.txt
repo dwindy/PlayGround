@@ -1,0 +1,1 @@
+/usr/bin/c++ -g CMakeFiles/g2oplayground2.dir/main.cpp.o -o g2oplayground2 
