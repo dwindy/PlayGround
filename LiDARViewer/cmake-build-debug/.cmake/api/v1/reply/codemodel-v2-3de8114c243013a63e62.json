@@ -76,8 +76,8 @@
 	"kind" : "codemodel",
 	"paths" : 
 	{
-		"build" : "/home/xin/Desktop/LiDARViewer/cmake-build-debug",
-		"source" : "/home/xin/Desktop/LiDARViewer"
+		"build" : "/home/xin/Desktop/PlayGround/LiDARViewer/cmake-build-debug",
+		"source" : "/home/xin/Desktop/PlayGround/LiDARViewer"
 	},
 	"version" : 
 	{

@@ -295,7 +295,7 @@
 				}
 			],
 			"type" : "INTERNAL",
-			"value" : "/home/xin/Desktop/LiDARViewer/cmake-build-debug"
+			"value" : "/home/xin/Desktop/PlayGround/LiDARViewer/cmake-build-debug"
 		},
 		{
 			"name" : "CMAKE_CACHE_MAJOR_VERSION",
@@ -831,7 +831,7 @@
 				}
 			],
 			"type" : "INTERNAL",
-			"value" : "/home/xin/Desktop/LiDARViewer"
+			"value" : "/home/xin/Desktop/PlayGround/LiDARViewer"
 		},
 		{
 			"name" : "CMAKE_INSTALL_PREFIX",
@@ -1775,7 +1775,7 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "/home/xin/Desktop/LiDARViewer/cmake-build-debug"
+			"value" : "/home/xin/Desktop/PlayGround/LiDARViewer/cmake-build-debug"
 		},
 		{
 			"name" : "LiDARViewer_IS_TOP_LEVEL",
@@ -1799,7 +1799,7 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "/home/xin/Desktop/LiDARViewer"
+			"value" : "/home/xin/Desktop/PlayGround/LiDARViewer"
 		},
 		{
 			"name" : "OpenCV_DIR",

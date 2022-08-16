@@ -2,7 +2,7 @@
 // Created by xin on 09/08/22.
 /*
  * this funciont is going to test if the LSD(BinaryDescriptor) could be merged
- * todo: 重叠位置的keylines should be merged.
+ * todo: 合并之前绘制到图片上
  */
 //
 
@@ -23,16 +23,16 @@ static const char *keys = {"{@image_path | | Image path }" "{@image_path2 | | Im
  * the merged line should be those two endpoints that far-est to eachother.
  * Still, merge line2 into line1
  */
-void mergeKeyLineCaseSSEE(KeyLine &line1, KeyLine line2) {
-    double SX1 = line1.startPointX, SY1 = line1.startPointY, SX2 = line2.startPointX, SY2 = line2.startPointY;
-    double EX1 = line1.endPointX, EY1 = line1.endPointY, EX2 = line2.endPointX, EY2 = line2.endPointY;
-    double distanceS1E1 = (SX1 - EX1) * (SX1 - EX1) + (SY1 - EY1) * (SY1 - EY1);
-    double distanceS1S2 = (SX1 - SX2) * (SX1 - SX2) + (SY1 - SY2) * (SY1 - SY2);
-    double distanceS1E2 = (SX1 - EX2) * (SX1 - EX2) + (SY1 - EY2) * (SY1 - EY2);
-    double distanceE1S2 = (EX1 - SX2) * (EX1 - SX2) + (EY1 - SY2) * (EY1 - SY2);
-    double distanceE1E2 = (EX1 - EX2) * (EX1 - EX2) + (EY1 - EY2) * (EY1 - EY2);
-    double distanceS2E2 = (SX2 - EX2) * (SX2 - EX2) + (SY2 - EY2) * (SY2 - EY2);
-    double maxNumber = distanceS1E1;
+void mergeKeyLineCaseSSEE(KeyLine &line1, const KeyLine &line2) {
+    float SX1 = line1.startPointX, SY1 = line1.startPointY, SX2 = line2.startPointX, SY2 = line2.startPointY;
+    float EX1 = line1.endPointX, EY1 = line1.endPointY, EX2 = line2.endPointX, EY2 = line2.endPointY;
+    float distanceS1E1 = (SX1 - EX1) * (SX1 - EX1) + (SY1 - EY1) * (SY1 - EY1);
+    float distanceS1S2 = (SX1 - SX2) * (SX1 - SX2) + (SY1 - SY2) * (SY1 - SY2);
+    float distanceS1E2 = (SX1 - EX2) * (SX1 - EX2) + (SY1 - EY2) * (SY1 - EY2);
+    float distanceE1S2 = (EX1 - SX2) * (EX1 - SX2) + (EY1 - SY2) * (EY1 - SY2);
+    float distanceE1E2 = (EX1 - EX2) * (EX1 - EX2) + (EY1 - EY2) * (EY1 - EY2);
+    float distanceS2E2 = (SX2 - EX2) * (SX2 - EX2) + (SY2 - EY2) * (SY2 - EY2);
+    float maxNumber = distanceS1E1;
     if (maxNumber < distanceS1S2)
         maxNumber = distanceS1S2;
     if (maxNumber < distanceS1E2)
@@ -88,54 +88,77 @@ void mergeKeyLineCaseSSEE(KeyLine &line1, KeyLine line2) {
     line1.size = (line1.startPointX - line1.endPointX) * (line1.startPointY - line1.endPointY);
 }
 
-/*merge line2 INTO line1*/
-void mergeKeyLine(KeyLine &line1, KeyLine line2) {
-    //1st Merge start & end points
-    double distanceThres = 100;
-    double distanceSS = (line1.startPointX - line2.startPointX) * (line1.startPointX - line2.startPointX)
-                        + (line1.startPointY - line2.startPointY) * (line1.startPointY - line2.startPointY);
-    double distanceSE = (line1.startPointX - line2.endPointX) * (line1.startPointX - line2.endPointX)
-                        + (line1.startPointY - line2.endPointY) * (line1.startPointY - line2.endPointY);
-    double distanceES = (line1.endPointX - line2.startPointX) * (line1.endPointX - line2.startPointX)
-                        + (line1.endPointY - line2.startPointY) * (line1.endPointY - line2.startPointY);
-    double distanceEE = (line1.endPointX - line2.endPointX) * (line1.endPointX - line2.endPointX)
-                        + (line1.endPointY - line2.endPointY) * (line1.endPointY - line2.endPointY);
-    double distanceSSEE = distanceSS + distanceEE;
-    //Case: two keylines overlapped
-    if (distanceSS < distanceThres && distanceEE < distanceThres && distanceSSEE < (2 * distanceThres)) {
-        mergeKeyLineCaseSSEE(line1, line2);
-    } else {//Other cases
-        if (distanceSS < distanceThres) {//remove Starts and Starts | end1-----start1-start2-----end2
-//            line1.startPointX = line1.endPointX;
-//            line1.startPointY = line1.endPointY;
-//            line1.endPointX = line2.endPointX;
-//            line1.endPointY = line2.endPointY;
-            mergeKeyLineCaseSSEE(line1,line2);
-        }
-        if (distanceSE < distanceThres) {//remove start and end | end1-----start1-end2-----start2
-//            line1.startPointX = line1.endPointX;
-//            line1.startPointY = line1.endPointY;
-//            line1.endPointX = line2.startPointX;
-//            line1.endPointY = line2.startPointY;
-            mergeKeyLineCaseSSEE(line1,line2);
-        }
-        if (distanceES < distanceThres) {//remove ends and Starts | start1-----end1-start2-----end2
-//            line1.endPointX = line2.endPointX;
-//            line1.endPointY = line2.endPointY;
-            mergeKeyLineCaseSSEE(line1,line2);
-        }
-        if (distanceEE < distanceThres) {//remove end and end | start1-----end1-end2-----start2
-//            line1.endPointX = line2.startPointX;
-//            line1.endPointY = line2.startPointY;
-            mergeKeyLineCaseSSEE(line1,line2);
-        }
-        //merge others
-//        line1.numOfPixels += line2.numOfPixels;
-//        line1.angle = (line1.angle + line2.angle) / 2;
-//        line1.lineLength += line2.lineLength;
-//        line1.response += line2.response;
-//        line1.size = (line1.endPointX - line1.startPointX) * (line1.endPointX - line1.startPointX);
+/*
+ * dealing with the case that two keylines overlap.
+ * since those two keylines are close,
+ * the merged line should be those two endpoints that far-est to eachother.
+ * Still, merge line2 into line1
+ */
+void mergeKeyLine(KeyLine &line1, const KeyLine &line2) {
+
+    float SX1 = line1.startPointX, SY1 = line1.startPointY, SX2 = line2.startPointX, SY2 = line2.startPointY;
+    float EX1 = line1.endPointX, EY1 = line1.endPointY, EX2 = line2.endPointX, EY2 = line2.endPointY;
+    //to find out the farest points
+    float distanceS1E1 = (SX1 - EX1) * (SX1 - EX1) + (SY1 - EY1) * (SY1 - EY1);
+    float distanceS1S2 = (SX1 - SX2) * (SX1 - SX2) + (SY1 - SY2) * (SY1 - SY2);
+    float distanceS1E2 = (SX1 - EX2) * (SX1 - EX2) + (SY1 - EY2) * (SY1 - EY2);
+    float distanceE1S2 = (EX1 - SX2) * (EX1 - SX2) + (EY1 - SY2) * (EY1 - SY2);
+    float distanceE1E2 = (EX1 - EX2) * (EX1 - EX2) + (EY1 - EY2) * (EY1 - EY2);
+    float distanceS2E2 = (SX2 - EX2) * (SX2 - EX2) + (SY2 - EY2) * (SY2 - EY2);
+    float maxNumber = distanceS1E1;
+    if (maxNumber < distanceS1S2)
+        maxNumber = distanceS1S2;
+    if (maxNumber < distanceS1E2)
+        maxNumber = distanceS1E2;
+    if (maxNumber < distanceE1S2)
+        maxNumber = distanceE1S2;
+    if (maxNumber < distanceE1E2)
+        maxNumber = distanceE1E2;
+    if (maxNumber < distanceS2E2)
+        maxNumber = distanceS2E2;
+    if (maxNumber == distanceS1E1) {
+        line1.startPointX = SX1;
+        line1.startPointY = SY1;
+        line1.endPointX = EX1;
+        line1.endPointY = EY1;
     }
+    if (maxNumber == distanceS1S2) {
+        line1.startPointX = SX1;
+        line1.startPointY = SY1;
+        line1.endPointX = SX2;
+        line1.endPointY = SY2;
+    }
+    if (maxNumber == distanceS1E2) {
+        line1.startPointX = SX1;
+        line1.startPointY = SY1;
+        line1.endPointX = EX2;
+        line1.endPointY = EY2;
+    }
+    if (maxNumber == distanceE1S2) {
+        line1.startPointX = SX2;//EX1;
+        line1.startPointY = SY2;//EY1;
+        line1.endPointX = EX1;//SX2;
+        line1.endPointY = EY1;//SY2;
+    }
+    if (maxNumber == distanceE1E2) {
+        line1.startPointX = EX1;
+        line1.startPointY = EY1;
+        line1.endPointX = EX2;
+        line1.endPointY = EY2;
+    }
+    if (maxNumber == distanceS2E2) {
+        line1.startPointX = SX2;
+        line1.startPointY = SY2;
+        line1.endPointX = EX2;
+        line1.endPointY = EY2;
+    }
+    //merge others
+    line1.numOfPixels += line2.numOfPixels; //not relyable because overlap
+    line1.angle = (line1.angle + line2.angle) / 2;
+    line1.lineLength = sqrt((line1.endPointX - line1.startPointX) * (line1.endPointX - line1.startPointX) +
+                            (line1.endPointY - line1.startPointY) * (line1.endPointY - line1.startPointY));
+    line1.response += line2.response;
+    line1.size = (line1.startPointX - line1.endPointX) * (line1.startPointY - line1.endPointY);
 }
 
 int main(int argc, char **argv) {
@@ -150,7 +173,7 @@ int main(int argc, char **argv) {
         return -1;
     /* load image */
     cv::Mat imageMat = imread(image_path, 1);
-    if (imageMat.data == NULL) {
+    if (imageMat.data == nullptr) {
         std::cout << "Error, image could not be loaded. Please, check its path" << std::endl;
         return -1;
     }
@@ -169,7 +192,7 @@ int main(int argc, char **argv) {
     /* draw lines extracted from octave 0 */
     if (output_bd.channels() == 1)
         cvtColor(output_bd, output_bd, COLOR_GRAY2BGR);
-    /* print keylines */
+    /* print all keylines attribution */
 //    for (int i = 0; i < keylines.size(); i++) {
 //        cout << "keyline No." << keylines[i].class_id << " with angle " << keylines[i].angle
 //             << " response " << keylines[i].response << " length :" << keylines[i].lineLength
@@ -193,7 +216,7 @@ int main(int argc, char **argv) {
             line(output_bd, pt1, pt2, Scalar(B, G, R), 3);
         }
     }
-    imshow("BD lines", output_bd);
+    imshow("BD keylines original", output_bd);
     waitKey();
 
 //    /*
@@ -242,56 +265,91 @@ int main(int argc, char **argv) {
 //    cout<<"------result keyline "<<keylines[0].startPointX<<" , "<<keylines[0].startPointY<<" | "<<keylines[0].endPointX<<" , "<<keylines[0].endPointY<<endl;
 
 
-    /* merging 360/3.14 = 0.008722222 per degree*/
+    /* merging 360/3.14 = 0.008722222 rad per degree*/
+    float degreeThres = 0.008722222 * 5;
+    float distanceThres = 25;
     std::vector<bool> keylineMergeFlags(keylines.size(), false);
     for (int i = 0; i < keylines.size(); i++) {
-        if(keylineMergeFlags[i]==true)
+        if (keylineMergeFlags[i])//If this keyline has been merge into another
             continue;
         cout << "keyline1 No." << keylines[i].class_id << " with angle " << keylines[i].angle
              << " response " << keylines[i].response << " length :" << keylines[i].lineLength
              << " start point " << keylines[i].startPointX << " " << keylines[i].startPointY
-             << " end point " << keylines[i].endPointX << " " << keylines[i].endPointY
-             << endl;
+             << " end point " << keylines[i].endPointX << " " << keylines[i].endPointY << endl;
+        if (keylines[i].octave == 0) {
+            /* get extremes of line */
+            Point pt1 = Point2f(keylines[i].startPointX, keylines[i].startPointY);
+            Point pt2 = Point2f(keylines[i].endPointX, keylines[i].endPointY);
+            /* draw line */
+            line(output_bd_merge, pt1, pt2, Scalar(255, 0, 0), 3);
+            //imshow("BD lines merged", output_bd_merge);
+            //waitKey();
+        }
         for (int j = 0; j < keylines.size(); j++) {
-            if (keylineMergeFlags[j] == false&&j!=i) {
-                if (abs(keylines[j].angle - keylines[i].angle) < (0.008722222 * 10)) {//angle < 5 degrees
-                    double distanceSS = (keylines[i].startPointX - keylines[j].startPointX) *
+            if (!keylineMergeFlags[j] && j != i) { //This keyline shouldn't be merged into another | and j!=i
+                float degree1 = abs(keylines[i].angle) + abs(keylines[j].angle);
+                float degree2 = abs(keylines[j].angle - keylines[i].angle);
+                if ((abs(degree1 - 3.14) < degreeThres) || degree2 < degreeThres) {//angle < 5 degrees
+                    float distanceSS = (keylines[i].startPointX - keylines[j].startPointX) *
                                         (keylines[i].startPointX - keylines[j].startPointX) +
                                         (keylines[i].startPointY - keylines[j].startPointY) *
                                         (keylines[i].startPointY - keylines[j].startPointY);
-                    double distanceSE = (keylines[i].startPointX - keylines[j].endPointX) *
+                    float distanceSE = (keylines[i].startPointX - keylines[j].endPointX) *
                                         (keylines[i].startPointX - keylines[j].endPointX) +
                                         (keylines[i].startPointY - keylines[j].endPointY) *
                                         (keylines[i].startPointY - keylines[j].endPointY);
-                    double distanceES = (keylines[i].endPointX - keylines[j].startPointX) *
+                    float distanceES = (keylines[i].endPointX - keylines[j].startPointX) *
                                         (keylines[i].endPointX - keylines[j].startPointX) +
                                         (keylines[i].endPointY - keylines[j].startPointY) *
                                         (keylines[i].endPointY - keylines[j].startPointY);
-                    double distanceEE = (keylines[i].endPointX - keylines[j].endPointX) *
+                    float distanceEE = (keylines[i].endPointX - keylines[j].endPointX) *
                                         (keylines[i].endPointX - keylines[j].endPointX) +
                                         (keylines[i].endPointY - keylines[j].endPointY) *
                                         (keylines[i].endPointY - keylines[j].endPointY);
-                    bool SS = false, SE = false, ES = false, EE = false;
-                    if (distanceSS < 100)SS = true;
-                    if (distanceSE < 100)SE = true;
-                    if (distanceEE < 100)EE = true;
-                    if (distanceES < 100)ES = true;
-                    if (SS || SE || EE || ES) {//start or end points is close
+                    float midXi = (keylines[i].startPointX + keylines[i].endPointX) / 2;
+                    float midYi = (keylines[i].startPointY + keylines[i].endPointY) / 2;
+                    float midXj = (keylines[j].startPointX + keylines[j].endPointX) / 2;
+                    float midYj = (keylines[j].startPointY + keylines[j].endPointY) / 2;
+                    float distanceMid = (midXi - midXj) * (midXi - midXj) + (midYi - midYj) * (midYi - midYj);
+                    bool SS = false, SE = false, ES = false, EE = false, Mid = false;
+                    if (distanceSS < distanceThres)SS = true;
+                    if (distanceSE < distanceThres)SE = true;
+                    if (distanceEE < distanceThres)EE = true;
+                    if (distanceES < distanceThres)ES = true;
+                    if (distanceMid < distanceThres)Mid = true;
+                    if (SS || SE || EE || ES || Mid) {//start or end points is close
                         cout << "merge with" << endl;
+                        cout <<" degree1 "<<degree1<<" degree2 "<<degree2<<endl;
                         cout << "keyline2 No." << keylines[j].class_id << " with angle " << keylines[j].angle
                              << " response " << keylines[j].response << " length :" << keylines[j].lineLength
                              << " start point " << keylines[j].startPointX << " " << keylines[j].startPointY
-                             << " end point " << keylines[j].endPointX << " " << keylines[j].endPointY
-                             << endl;
+                             << " end point " << keylines[j].endPointX << " " << keylines[j].endPointY << endl;
+                        if (keylines[j].octave == 0) {
+                            /* get extremes of line */
+                            Point pt1 = Point2f(keylines[j].startPointX, keylines[j].startPointY);
+                            Point pt2 = Point2f(keylines[j].endPointX, keylines[j].endPointY);
+                            /* draw line */
+                            line(output_bd_merge, pt1, pt2, Scalar(0, 255, 0), 3);
+                            imshow("BD lines merged", output_bd_merge);
+                            waitKey();
+                        }
                         mergeKeyLine(keylines[i], keylines[j]);
                         keylineMergeFlags[j] = true;
                         cout << "result : " << endl;
                         cout << "keyline new1 No." << keylines[i].class_id << " with angle " << keylines[i].angle
                              << " response " << keylines[i].response << " length :" << keylines[i].lineLength
                              << " start point " << keylines[i].startPointX << " " << keylines[i].startPointY
-                             << " end point " << keylines[i].endPointX << " " << keylines[i].endPointY
-                             << endl;
-                        j = 0;//reset j
+                             << " end point " << keylines[i].endPointX << " " << keylines[i].endPointY << endl;
+                        //j = 0;//reset j
+                        if (keylines[i].octave == 0) {
+                            /* get extremes of line */
+                            Point pt1 = Point2f(keylines[i].startPointX, keylines[i].startPointY);
+                            Point pt2 = Point2f(keylines[i].endPointX, keylines[i].endPointY);
+                            /* draw line */
+                            line(output_bd_merge, pt1, pt2, Scalar(255, 255, 0), 3);
+                        }
+                        imshow("BD lines merged", output_bd_merge);
+                        waitKey();
                     }
                 }
             }
@@ -309,36 +367,38 @@ int main(int argc, char **argv) {
 //    }
 
 
-    /* show */
-    for (size_t i = 0; i < keylines.size(); i++) {
-        KeyLine kl = keylines[i];
-        if(keylineMergeFlags[i]== true)
-            continue;
-        cout << "keyline No." << keylines[i].class_id << " with angle " << keylines[i].angle
-             << " response " << keylines[i].response << " length :" << keylines[i].lineLength
-             << " start point " << keylines[i].startPointX << " " << keylines[i].startPointY
-             << " end point " << keylines[i].endPointX << " " << keylines[i].endPointY
-             <<endl;
-        if (kl.octave == 0) {
-            /* get a random color */
-            int R = (rand() % (int) (255 + 1));
-            int G = (rand() % (int) (255 + 1));
-            int B = (rand() % (int) (255 + 1));
-            /* get extremes of line */
-            Point pt1 = Point2f(kl.startPointX, kl.startPointY);
-            Point pt2 = Point2f(kl.endPointX, kl.endPointY);
-            /* draw line */
-            line(output_bd_merge, pt1, pt2, Scalar(B, G, R), 3);
-        }
-        imshow("BD lines merged", output_bd_merge);
-        waitKey();
-    }
-    cv::circle(output_bd_merge,cv::Point (848,0),5, cv::Scalar(0,0,255),1);
-    cv::circle(output_bd_merge,cv::Point (848,183),5, cv::Scalar(0,0,255),1);
-    cv::circle(output_bd_merge,cv::Point (848,183),7, cv::Scalar(255,0,0),1);
-    cv::circle(output_bd_merge,cv::Point (851,45),5, cv::Scalar(255,0,0),1);
+//    /* show */
+//    for (size_t i = 0; i < keylines.size(); i++) {
+//        KeyLine kl = keylines[i];
+//        if (keylineMergeFlags[i] == true)
+//            continue;
+//        cout << "keyline No." << keylines[i].class_id << " with angle " << keylines[i].angle
+//             << " response " << keylines[i].response << " length :" << keylines[i].lineLength
+//             << " start point " << keylines[i].startPointX << " " << keylines[i].startPointY
+//             << " end point " << keylines[i].endPointX << " " << keylines[i].endPointY
+//             << endl;
+//        if (kl.octave == 0) {
+//            /* get a random color */
+//            int R = (rand() % (int) (255 + 1));
+//            int G = (rand() % (int) (255 + 1));
+//            int B = (rand() % (int) (255 + 1));
+//            /* get extremes of line */
+//            Point pt1 = Point2f(kl.startPointX, kl.startPointY);
+//            Point pt2 = Point2f(kl.endPointX, kl.endPointY);
+//            /* draw line */
+//            line(output_bd_merge, pt1, pt2, Scalar(B, G, R), 3);
+//        }
+//        //imshow("BD lines merged", output_bd_merge);
+//        //waitKey();
+//    }
+//    cv::circle(output_bd_merge, cv::Point(848, 0), 5, cv::Scalar(0, 0, 255), 1);
+//    cv::circle(output_bd_merge, cv::Point(848, 183), 5, cv::Scalar(0, 0, 255), 1);
+//    cv::circle(output_bd_merge, cv::Point(848, 183), 7, cv::Scalar(255, 0, 0), 1);
+//    cv::circle(output_bd_merge, cv::Point(851, 45), 5, cv::Scalar(255, 0, 0), 1);
+//    cv::circle(output_bd_merge, cv::Point(300, 200), 5, cv::Scalar(255, 0, 0), 1);
+//    cv::circle(output_bd_merge, cv::Point(310, 200), 5, cv::Scalar(255, 0, 0), 1);
     imshow("BD lines merged", output_bd_merge);
     waitKey();
 
-    cout<<"system ended"<<endl;
+    cout << "system ended" << endl;
 }
