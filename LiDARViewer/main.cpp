@@ -13,9 +13,16 @@
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/io/pcd_io.h>
 #include "tic_toc.h"
+///Line features
+#include "LSD_merge.h"
 
 using namespace std;
+using namespace cv;
+using namespace cv::line_descriptor;
+
 typedef pcl::PointXYZI PointType;
+
+
 
 ///LiDAR Related Parameters
 int N_SCANS = 64;
@@ -30,7 +37,7 @@ pcl::PointCloud<PointType> mCornerPointsSharp;
 pcl::PointCloud<PointType> mCornerPointsLessSharp;
 pcl::PointCloud<PointType> mSurfPointsFlat;
 pcl::PointCloud<PointType> mSurfPointsLessFlat;
-std::vector<pcl::PointCloud<PointType>> laserCloud14Scans(N_SCANS/4);
+std::vector<pcl::PointCloud<PointType>> laserCloud16Scans(N_SCANS/4);
 
 ///Camera LiDAR Calibration Parameters
 double Rcl00 = 0.007533745;
@@ -67,6 +74,9 @@ struct point2d{
     float x;
     float y;
     int id2d;
+    int index2line;
+    int indexScani;
+    int indexScanj;
 };
 
 struct point3d{
@@ -74,6 +84,8 @@ struct point3d{
     float y;
     float z;
     int id3d;
+    int indexScani;
+    int indexScanj;
 };
 
 void readLaserPoints(string const fileName, vector<vector<float>> &laserPoints) {
@@ -244,7 +256,7 @@ void ExtractLiDARFeature(vector<vector<float>> mLaserPoints) {
         laserCloudScans[scanID].push_back(point);
         ///added
         if(scanID%4==0){
-            laserCloud14Scans[scanID/4].push_back(point);
+            laserCloud16Scans[scanID/4].push_back(point);
         }
     }
     // cloudSize是有效的点云的数目
@@ -437,7 +449,7 @@ void ExtractLiDARFeature(vector<vector<float>> mLaserPoints) {
     mSurfPointsFlat = surfPointsFlat;
     mSurfPointsLessFlat.resize(surfPointsLessFlat.size());
     mSurfPointsLessFlat = surfPointsLessFlat;
-    printf("Corner Pt: %u, Less Corner : %u, Flat Pt: %u, Less Flat Pt : %u \n", mCornerPointsSharp.size(),
+    printf("Corner Pt: %lu, Less Corner :%luu, Flat Pt: %lu, Less Flat Pt : %lu \n", mCornerPointsSharp.size(),
            mCornerPointsLessSharp.size(), mSurfPointsFlat.size(), mSurfPointsLessFlat.size());
     int pause = 1;
 }
@@ -542,6 +554,8 @@ void ProjectLiDARtoCam(std::vector<pcl::PointCloud<PointType>> laserCloud14Scans
                 newP.x = P_cam.at<double>(0, 0);
                 newP.y = P_cam.at<double>(1, 0);
                 newP.z = P_cam.at<double>(2, 0);
+                newP.indexScani = i;
+                newP.indexScanj = li;
                 LiDARPoints_Cam.push_back(newP);
             }
         }
@@ -595,11 +609,12 @@ void ProjectLiDARtoCam(pcl::PointCloud<PointType> LiDARFeatures, vector<point3d>
             }
         }
 }
-/*
+
+/**
  * LiDAR under Cam coordination
  * Project to Image
  */
-void ProjectLiDARtoImg(int cols, int rows, vector<point3d> LiDARPoints, vector<point2d> &LiDARonImg) {
+void ProjectLiDARtoImg(int cols, int rows, vector<point3d> LiDARPoints, vector<point2d> &LiDARonImg, vector<point2d> &LiDARFloor) {
     //it seems like OpenCV upgraded, then the func changed?
     //cv::Mat P_rect_00 = cv::Mat::zeros(CvSize(4, 3), CV_64F);
     cv::Mat P_rect_00 = cv::Mat::zeros(3,4,CV_64F);
@@ -624,6 +639,10 @@ void ProjectLiDARtoImg(int cols, int rows, vector<point3d> LiDARPoints, vector<p
         Y = P_rect_00 * R_rect_00 * X;
         pt.x = Y.at<double>(0, 0) / Y.at<double>(2, 0);
         pt.y = Y.at<double>(1, 0) / Y.at<double>(2, 0);
+        pt.index2line = -1;
+        pt.id2d = pi;
+        pt.indexScani = LiDARPoints[pi].indexScani;
+        pt.indexScanj = LiDARPoints[pi].indexScanj;
         //why comment the checking will not lead system fail? dray point outside the image is okay for opencv?
 //        if (pt.x < 0 || pt.x >= cols || pt.y < 0 || pt.y >= rows) {
 //            //cout<<X.at<double>(0, 0)<<" "<<X.at<double>(1, 0)<<" "<<X.at<double>(2, 0)<<" -> "<<pt.x<<" "<<pt.y<<endl;
@@ -635,6 +654,9 @@ void ProjectLiDARtoImg(int cols, int rows, vector<point3d> LiDARPoints, vector<p
 //        mLaserPt_cam[pi].index2d = counter;
         LiDARonImg.push_back(pt);
         counter++;
+        if(LiDARPoints[pi].z<0.1){
+            cout<<LiDARPoints[pi].x<<" "<<LiDARPoints[pi].y<<" "<<LiDARPoints[pi].z<<endl;
+        }
     }
     //Test
 //    X.at<double>(0, 0) = 3;
@@ -650,21 +672,238 @@ void ProjectLiDARtoImg(int cols, int rows, vector<point3d> LiDARPoints, vector<p
 }
 
 void drawImage(cv::Mat &im, vector<point2d> LiDAR2d, vector<point2d> ImageFeatures){
-    for(int i = 0; i < LiDAR2d.size(); i ++)
-    {
-        cv::circle(im,cv::Point2d(LiDAR2d[i].x, LiDAR2d[i].y),2,cv::Scalar(0,255,0),-1);
+    for (int i = 0; i < LiDAR2d.size(); i++) {
+        if (LiDAR2d[i].index2line >= 0)
+            cv::circle(im, cv::Point2d(LiDAR2d[i].x, LiDAR2d[i].y), 1, cv::Scalar(0, 0, 200), -1);
+        else
+            cv::circle(im, cv::Point2d(LiDAR2d[i].x, LiDAR2d[i].y), 1, cv::Scalar(127, 127, 0), -1);
     }
-    for(int i = 0; i < ImageFeatures.size(); i ++)
-    {
-        cv::circle(im,cv::Point2d(ImageFeatures[i].x, ImageFeatures[i].y),2,cv::Scalar(255,0,0),-1);
+    for (int i = 0; i < ImageFeatures.size(); i++) {
+        if (ImageFeatures[i].index2line >= 0)
+            cv::circle(im, cv::Point2d(ImageFeatures[i].x, ImageFeatures[i].y), 1, cv::Scalar(0, 255, 0), -1);
+        else
+            cv::circle(im, cv::Point2d(ImageFeatures[i].x, ImageFeatures[i].y), 1, cv::Scalar(255, 0, 0), -1);
     }
+    cv::circle(im,cv::Point2d(50,367),3,cv::Scalar(255, 255, 0),-1);
     cout<<"LiDAR2d size "<<LiDAR2d.size()<<endl;
+}
+
+//todo point should be inside the line bounding box
+void connectPointsLines_back(cv::Mat &im, vector<KeyLine> selectedKeyLines, vector<point2d> &imgKeyPoint,
+                        vector<point2d> &LiDAR2d) {
+    bool debug= false;
+    ///Step 1 pair up lines and keypoints
+    vector<int> keyPt2LSD(imgKeyPoint.size(), -1);
+    for (int i = 0; i < imgKeyPoint.size(); i++) {
+        float x0 = imgKeyPoint[i].x, y0 = imgKeyPoint[i].y;
+//        if (abs(x0 - 558) < 5 && abs(y0 - 285) < 5) {
+//            debug=true;
+//            cout << x0 << " " << y0 << endl;
+//            cv::circle(im, cv::Point2f(x0,y0), 1,cv::Scalar(0,0,255),-1);
+//        }
+        float minDistance = 100;
+        imgKeyPoint[i].index2line = -1;
+        int index = -1;
+        //cout<<"point "<<x0<<","<<y0<<" close to "<<keyLineABCs[index][0]<<","<<keyLineABCs[index][1]<<","<<keyLineABCs[index][2]<<endl;
+        ///Step 1.2 point to each endpoint
+        for (int j = 0; j < selectedKeyLines.size(); j++) {
+            float x1 = selectedKeyLines[j].startPointX, y1 = selectedKeyLines[j].startPointY;
+            float x2 = selectedKeyLines[j].endPointX, y2 = selectedKeyLines[j].endPointY;
+            float dis2ends = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1))
+                             + sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+            if (abs(dis2ends - selectedKeyLines[j].lineLength) < minDistance) {
+                minDistance = dis2ends;
+                index = j;
+                //if(debug)
+                    cout<<"mindis "<<minDistance<<endl;
+            }
+        }
+        if(debug){
+            cv::circle(im, cv::Point2f(selectedKeyLines[index].startPointX,selectedKeyLines[index].startPointY), 1,cv::Scalar(0,255,255),-1);
+            cv::circle(im, cv::Point2f(selectedKeyLines[index].endPointX,selectedKeyLines[index].endPointY), 1,cv::Scalar(0,255,255),-1);
+            imshow("BD lines merged", im);
+            waitKey();
+        }
+        if (minDistance < selectedKeyLines[index].lineLength/5)
+            imgKeyPoint[i].index2line = index;
+    }
+}
+
+/*
+ * pair up the LSD lines, keypoints and 2d lidar points
+ */
+void connectPointsLines(cv::Mat &im, vector<KeyLine> selectedKeyLSDLines, vector<point2d> &imgKeyPoint, vector<point2d> &LiDAR2d) {
+    //todo this should be in a line class ---(y2-y1)x+(x1-x2)y+(x2y1-x1y2)=0
+    vector<vector<float>> keyLineABCs;//store keylines in terms of Ax+By+C = 0;
+    for (int i = 0; i < selectedKeyLSDLines.size(); i++) {
+        float x1 = selectedKeyLSDLines[i].startPointX, y1 = selectedKeyLSDLines[i].startPointY;
+        float x2 = selectedKeyLSDLines[i].endPointX, y2 = selectedKeyLSDLines[i].endPointY;
+        float A = y2 - y1, B = x1 - x2, C = x2 * y1 - x1 * y2;
+        vector<float> thisLine;
+        thisLine.push_back(A);
+        thisLine.push_back(B);
+        thisLine.push_back(C);
+        keyLineABCs.push_back(thisLine);
+    }
+    ///Step 1 pair up LSD lines and ORB keypoints
+    vector<int> keyPt2LSD(imgKeyPoint.size(), -1);
+    for (int i = 0; i < imgKeyPoint.size(); i++) {
+        float x0 = imgKeyPoint[i].x, y0 = imgKeyPoint[i].y;
+        float minDistance1 = 5, minDistance2 = 5, minDistance3 = 5;
+        imgKeyPoint[i].index2line = -1;
+        int index1 = -1, index2 = -1, index3 = -1;
+        for (int j = 0; j < selectedKeyLSDLines.size(); j++) {
+            ///Step 1.1 search for 3 lines
+            ///point to line --- d = abs(Ax0+By0+C) / abs(sqrt(A^2+B^2))
+            float A = keyLineABCs[j][0], B = keyLineABCs[j][1], C = keyLineABCs[j][2];
+            float dis = abs(A * x0 + B * y0 + C) /
+                        sqrt(A * A + B * B);
+            if (dis < minDistance1) {
+                minDistance3 = minDistance2;
+                index3 = index2;
+                minDistance2 = minDistance1;
+                index2 = index1;
+                minDistance1 = dis;
+                index1 = j;
+            } else {
+                if (dis >= minDistance1 && dis < minDistance2) {
+                    minDistance3 = minDistance2;
+                    index3 = index2;
+                    minDistance2 = dis;
+                    index2 = j;
+                } else {
+                    if (dis >= minDistance2 && dis < minDistance3) {
+                        minDistance3 = dis;
+                        index3 = j;
+                    }
+                }
+            }
+        }
+        ///Step 1.2 select nearest line from above 3
+        float disToLineThres = 3; //? not in use current because above 3 line is qualified already
+        float disTo2EndsThres = 1;
+        if (index1 > -1) {
+            //cout<<"point "<<x0<<","<<y0<<" close to "<<keyLineABCs[index][0]<<","<<keyLineABCs[index][1]<<","<<keyLineABCs[index][2]<<endl;
+            ///Candidate 1 --- distance to each endpoints and sum up
+            float x1 = selectedKeyLSDLines[index1].startPointX, y1 = selectedKeyLSDLines[index1].startPointY;
+            float x2 = selectedKeyLSDLines[index1].endPointX, y2 = selectedKeyLSDLines[index1].endPointY;
+            float disToStart = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+            float disToEnd = sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+            float disTo2EndPoints = disToStart + disToEnd;
+            if (disToStart <= disToLineThres || disToEnd <= disToLineThres || disTo2EndPoints <= disTo2EndsThres) {
+                imgKeyPoint[i].index2line = index1;
+            } else {
+                if (index2 > -1) {
+                    ///Candidate 2 --- distance to each endpoints and sum up
+                    x1 = selectedKeyLSDLines[index2].startPointX, y1 = selectedKeyLSDLines[index2].startPointY;
+                    x2 = selectedKeyLSDLines[index2].endPointX, y2 = selectedKeyLSDLines[index2].endPointY;
+                    disToStart = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+                    disToEnd = sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+                    disTo2EndPoints = disToStart + disToEnd;
+                    if (disToStart <= disToLineThres || disToEnd <= disToLineThres ||
+                        disTo2EndPoints <= disTo2EndsThres) {
+                        imgKeyPoint[i].index2line = index2;
+                    }
+                } else {
+                    if (index3 > -1) {
+                        ///Candidate 2 --- distance to each endpoints and sum up
+                        x1 = selectedKeyLSDLines[index3].startPointX, y1 = selectedKeyLSDLines[index3].startPointY;
+                        x2 = selectedKeyLSDLines[index3].endPointX, y2 = selectedKeyLSDLines[index3].endPointY;
+                        disToStart = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+                        disToEnd = sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+                        disTo2EndPoints = disToStart + disToEnd;
+                        if (disToStart <= disToLineThres || disToEnd <= disToLineThres ||
+                            disTo2EndPoints <= disTo2EndsThres) {
+                            imgKeyPoint[i].index2line = index3;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ///Step 2 pair up LSD lines and lidar points
+    //vector<int> lidarPt2LSD(LiDAR2d.size(), -1);
+    for (int i = 0; i < LiDAR2d.size(); i++) {
+        float x0 = LiDAR2d[i].x, y0 = LiDAR2d[i].y;
+        ///Step 2.1 search for 3 nearest lines first
+        float minDistance1 = 5, minDistance2 = 5, minDistance3 = 5;
+        LiDAR2d[i].index2line = -1;
+        int index1 = -1, index2 = -1, index3 = -1;
+        for (int j = 0; j < selectedKeyLSDLines.size(); j++) {
+            ///Step 1.1 point to line --- d = abs(Ax0+By0+C) / abs(sqrt(A^2+B^2))
+            float A = keyLineABCs[j][0], B = keyLineABCs[j][1], C = keyLineABCs[j][2];
+            float dis = abs(A * x0 + B * y0 + C) /
+                        sqrt(A * A + B * B);
+            if (dis < minDistance1) {
+                minDistance3 = minDistance2;
+                index3 = index2;
+                minDistance2 = minDistance1;
+                index2 = index1;
+                minDistance1 = dis;
+                index1 = j;
+            } else {
+                if (dis >= minDistance1 && dis < minDistance2) {
+                    minDistance3 = minDistance2;
+                    index3 = index2;
+                    minDistance2 = dis;
+                    index2 = j;
+                } else {
+                    if (dis >= minDistance2 && dis < minDistance3) {
+                        minDistance3 = dis;
+                        index3 = j;
+                    }
+                }
+            }
+        }
+        ///Step 2.2 LiDAR point distance to each LSD endpoints
+        float disToLineThres = 3; //? not in use current because above 3 line is qualified already
+        float disTo2EndsThres = 1;
+        ///Candidate 1 --- distance to each endpoints and sum up
+        float x1 = selectedKeyLSDLines[index1].startPointX, y1 = selectedKeyLSDLines[index1].startPointY;
+        float x2 = selectedKeyLSDLines[index1].endPointX, y2 = selectedKeyLSDLines[index1].endPointY;
+        float disToStart = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+        float disToEnd = sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+        float disTo2EndPoints = disToStart + disToEnd;
+        if (disToStart <= disToLineThres || disToEnd <= disToLineThres || disTo2EndPoints <= disTo2EndsThres) {
+            LiDAR2d[i].index2line = index1;
+        } else {
+            if (index2 > -1) {
+                ///Candidate 2 --- distance to each endpoints and sum up
+                x1 = selectedKeyLSDLines[index2].startPointX, y1 = selectedKeyLSDLines[index2].startPointY;
+                x2 = selectedKeyLSDLines[index2].endPointX, y2 = selectedKeyLSDLines[index2].endPointY;
+                disToStart = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+                disToEnd = sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+                disTo2EndPoints = disToStart + disToEnd;
+                if (disToStart <= disToLineThres || disToEnd <= disToLineThres ||
+                    disTo2EndPoints <= disTo2EndsThres) {
+                    LiDAR2d[i].index2line = index2;
+                }
+            } else {
+                if (index3 > -1) {
+                    ///Candidate 2 --- distance to each endpoints and sum up
+                    x1 = selectedKeyLSDLines[index3].startPointX, y1 = selectedKeyLSDLines[index3].startPointY;
+                    x2 = selectedKeyLSDLines[index3].endPointX, y2 = selectedKeyLSDLines[index3].endPointY;
+                    disToStart = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+                    disToEnd = sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+                    disTo2EndPoints = disToStart + disToEnd;
+                    if (disToStart <= disToLineThres || disToEnd <= disToLineThres ||
+                        disTo2EndPoints <= disTo2EndsThres) {
+                        LiDAR2d[i].index2line = index3;
+                    }
+                }
+            }
+        }
+    }
+    for(int i = 0; i < keyLineABCs.size();i++){
+        keyLineABCs[i].clear();
+    }
+    keyLineABCs.clear();
 }
 
 int main() {
     std::cout << "Hello, World!" << std::endl;
-    string LiDARAddress = "../000001.bin";
-    string ImageAddress = "../000001.png";
+    string LiDARAddress = "../000000.bin";
+    string ImageAddress = "../000000.png";
     string KeyPtAddress = "../000001KeyPt.txt";
     ///Step 1 load point cloud
     vector<vector<float>> laserPoints;
@@ -675,22 +914,20 @@ int main() {
     readLaserPoints(LiDARAddress, laserPoints);
     cout << "LaserPoints point size " << laserPoints.size() << endl;
     ///Step 2 process point cloud
-    //todo decrease to 16 lines
-    ExtractLiDARFeature(laserPoints);
-    ///added
+    ExtractLiDARFeature(laserPoints);//todo 16laser as a input para
     for (int i = 0; i < 16; i++) {
-        cout << "line " << i << " size " << laserCloud14Scans[i].size() << endl;
+        cout << "line " << i << " size " << laserCloud16Scans[i].size() << endl;
     }
-    ///Project 2 image
+    ///Project to image
     cv::Mat im = cv::imread(ImageAddress, CV_LOAD_IMAGE_UNCHANGED);
-    cout<<"image cols "<<im.cols<<" "<<im.rows<<endl;
-    vector<point3d> LiDARPoints_Cam;//Lidar point under cam coor
+    cout<<"image cols "<<im.cols<<" rows "<<im.rows<<endl;
+    vector<point3d> LiDARPoints_Cam;//Lidar point under cam coordination system
     //ProjectLiDARtoCam(laserPoints, LiDARPoints_Cam);
-    ProjectLiDARtoCam(laserCloud14Scans, LiDARPoints_Cam);
+    ProjectLiDARtoCam(laserCloud16Scans, LiDARPoints_Cam);//project 16 lines
     //cout<<"LiDARPoints on Cam Size :"<<LiDARPoints_Cam.size()<<endl;
-
-    vector<point2d> LiDAR2d;//Lidar point in image
-    ProjectLiDARtoImg(im.cols, im.rows, LiDARPoints_Cam, LiDAR2d);
+    vector<point2d> LiDAR2d;//Lidar point in 2d image
+    vector<point2d> LiDARfloor;
+    ProjectLiDARtoImg(im.cols, im.rows, LiDARPoints_Cam, LiDAR2d, LiDARfloor);
     ///Read Image Key pt
     vector<point2d> ImgKeyPoint;//Lidar point in image
     ifstream keyReader;
@@ -700,61 +937,66 @@ int main() {
     while(keyReader>>x>>y){
         //cout<<"id "<<id<<": "<<x<<" "<<y<<endl;
         point2d newPt;
-        newPt.x = x; newPt.y = y; newPt.id2d=id;
+        newPt.x = x; newPt.y = y; newPt.id2d=id; newPt.index2line = -1;
         id ++;
         ImgKeyPoint.push_back(newPt);
     }
     keyReader.close();
-    ///Step 2.5 Canny and Lines
+    ///Step 2.5 LSD and Lines
+    //cvtColor(im,im,CV_GRAY2BGR);
+    //binary mask
+    cv::Mat mask = Mat::ones(im.size(), CV_8UC1);
+    Ptr<BinaryDescriptor> bd = BinaryDescriptor::createBinaryDescriptor();
+    vector<KeyLine> priKeylines;
+    cv::Mat output_bd = im.clone();
+    cv::Mat output_bd_merge = im.clone();
+    cvtColor(output_bd_merge,output_bd_merge,CV_GRAY2BGR);
     cvtColor(im,im,CV_GRAY2BGR);
-
-    cv::Mat dst,cdst,cdstP,dstP;
-    // Edge detection
-    Canny(im, dst, 50, 150, 3);
-    // Copy edges to the images that will display the results in BGR
-    cvtColor(dst, cdst, cv::COLOR_GRAY2BGR);
-    cdstP = cdst.clone();
-    // Standard Hough Line Transform
-    vector<cv::Vec2f> lines; // will hold the results of the detection
-    HoughLines(dst, lines, 1, CV_PI/180, 150, 0, 0 ); // runs the actual detection
-    // Draw the lines
-    for( size_t i = 0; i < lines.size(); i++ )
-    {
-        float rho = lines[i][0], theta = lines[i][1];
-        cv::Point pt1, pt2;
-        double a = cos(theta), b = sin(theta);
-        double x0 = a*rho, y0 = b*rho;
-        pt1.x = cvRound(x0 + 1000*(-b));
-        pt1.y = cvRound(y0 + 1000*(a));
-        pt2.x = cvRound(x0 - 1000*(-b));
-        pt2.y = cvRound(y0 - 1000*(a));
-        line( cdst, pt1, pt2, cv::Scalar(0,0,255), 1, cv::LINE_AA);
-    }
-    // Probabilistic Line Transform
-    vector<cv::Vec4i> linesP; // will hold the results of the detection
-    HoughLinesP(dst, linesP, 1, CV_PI/180, 150, 50, 10 ); // runs the actual detection
-    // Draw the lines
-    int counter = 0;
-    for( size_t i = 0; i < linesP.size(); i++ )
-    {
-        cv::Vec4i l = linesP[i];
-        line( cdstP, cv::Point(l[0], l[1]), cv::Point(l[2], l[3]), cv::Scalar(0,0,255), 1, cv::LINE_AA);
-        double dist = (l[0]-l[2])*(l[0]-l[2]) + (l[1]-l[3])*(l[1]-l[3]);
-        if(dist>10000){
-            counter ++;
-            line( im, cv::Point(l[0], l[1]), cv::Point(l[2], l[3]), cv::Scalar(0,0,255), 1, cv::LINE_AA);
+    bd->detect(im, priKeylines, mask);
+    /* compute descriptors */
+    cv::Mat descriptors;
+    bd->compute(im, priKeylines, descriptors);
+    /* merge primary keylines*/
+    std::vector<bool> keylineMergeFlags(priKeylines.size(), false);
+    mergeKeyLine1(priKeylines,keylineMergeFlags);
+    /* select the lines with enough length */
+    vector<KeyLine> selectedKeyLines;
+    for (int i = 0; i < priKeylines.size(); i++) {
+        if (true==keylineMergeFlags[i])
+            continue;
+        if(priKeylines[i].lineLength>lineLength){
+            selectedKeyLines.push_back(priKeylines[i]);
         }
     }
-    cout<<"drawn "<<counter<<" lines in image"<<endl;
-    imshow("Source", im);
-    cv::waitKey(0);
-    imshow("Detected Lines (in red) - Standard Hough Line Transform", cdst);
-    cv::waitKey(0);
-    imshow("Detected Lines (in red) - Probabilistic Line Transform", cdstP);
-    cv::waitKey(1);
-    ///Step 3 show point cloud
+    /* show */
+    for (size_t i = 0; i < selectedKeyLines.size(); i++) {
+        KeyLine kl = selectedKeyLines[i];
+//        cout << "selected keyline No." << selectedKeyLines[i].class_id << " with angle " << selectedKeyLines[i].angle
+//             << " response " << selectedKeyLines[i].response << " length :" << selectedKeyLines[i].lineLength
+//             << " start point " << selectedKeyLines[i].startPointX << " " << selectedKeyLines[i].startPointY
+//             << " end point " << selectedKeyLines[i].endPointX << " " << selectedKeyLines[i].endPointY
+//             << endl;
+        if (kl.octave == 0) {
+            /* get a random color */
+            int R = (rand() % (int) (255 + 1));
+            int G = (rand() % (int) (255 + 1));
+            int B = (rand() % (int) (255 + 1));
+            /* get extremes of line */
+            Point pt1 = Point2f(kl.startPointX, kl.startPointY);
+            Point pt2 = Point2f(kl.endPointX, kl.endPointY);
+            /* draw line */
+            line(output_bd_merge, pt1, pt2, Scalar(B, G, R), 2);
+            line(im, pt1, pt2, Scalar(B, G, R), 1);
+        }
+    }
+    imshow("BD lines merged", output_bd_merge);
+    waitKey();
+    ///Step 3 connect feature point and feature line
+    connectPointsLines(output_bd_merge, selectedKeyLines, ImgKeyPoint, LiDAR2d);
+
+    ///Step 4 show point cloud
     //todo thread show point clouds
-    //cvtColor(im,im,CV_GRAY2BGR);
+    //cv::circle(im, cv::Point2f(470, 359), 3, cv::Scalar(0, 200, 200), -1);
     drawImage(im,LiDAR2d,ImgKeyPoint);
     cv::imshow("ORB-SLAM2: Current Frame",im);
     cv::waitKey(0);
@@ -793,12 +1035,29 @@ int main() {
         glVertex3d(0, 0, 0);
         glEnd();
 
-        for (int li = 0; li < laserCloud14Scans.size(); li++) {
+        for (int li = 0; li < laserCloud16Scans.size(); li++) {
             glBegin(GL_POINTS);
-            glColor3f(1, 1, 1); //60 20 220
-            for (int ci = 0; ci < laserCloud14Scans[li].size(); ci++) {
-                glVertex3d(laserCloud14Scans[li].points[ci].x, laserCloud14Scans[li].points[ci].y,
-                           laserCloud14Scans[li].points[ci].z);
+            for (int ci = 0; ci < laserCloud16Scans[li].size(); ci++) {
+                if (laserCloud16Scans[li].points[ci].x > 0) {
+                    glColor3f(1, 1, 1); //60 20 220
+                    if (laserCloud16Scans[li].points[ci].z < -1.7) {
+                        glColor3f(0, 1, 1); //60 20 220
+                    }
+                    glVertex3d(laserCloud16Scans[li].points[ci].x,
+                               laserCloud16Scans[li].points[ci].y,
+                               laserCloud16Scans[li].points[ci].z);
+                }
+            }
+            glEnd();
+        }
+        for(int i =0; i < LiDAR2d.size();i++){
+            glBegin(GL_POINTS);
+            glColor3f(1, 0, 0); //60 20 220
+            if(LiDAR2d[i].index2line>-1){
+                int indexLine = LiDAR2d[i].indexScani;
+                int indexPoint = LiDAR2d[i].indexScanj;
+                glVertex3d(laserCloud16Scans[indexLine].points[indexPoint].x, laserCloud16Scans[indexLine].points[indexPoint].y,
+                           laserCloud16Scans[indexLine].points[indexPoint].z);
             }
             glEnd();
         }

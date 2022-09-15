@@ -1,33 +1,18 @@
 //
-// Created by xin on 09/08/22.
-/*
- * this funciont is going to test if the LSD(BinaryDescriptor) could be merged
- * todo: merge with point feature and LiDAR image
- */
+// Created by xin on 18/08/22.
 //
-
-#include "opencv2/line_descriptor/descriptor.hpp"
-#include <opencv2/core/utility.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/highgui.hpp>
-
-using namespace cv;
-using namespace cv::line_descriptor;
-using namespace std;
-
-static const char *keys = {"{@image_path | | Image path }" "{@image_path2 | | Image path 2 }"};
-
-/* merging 360/3.14 = 0.008722222 rad per degree*/
-const float degreeThres = 0.008722222 * 5;
-const float distanceThres = 25;
-const float lineLength = 30;
-
 /*
  * dealing with the case that two keylines overlap.
  * since those two keylines are close,
  * the merged line should be those two endpoints that far-est to eachother.
  * Still, merge line2 into line1
  */
+
+#include "LSD_merge.h"
+
+using namespace cv;
+using namespace cv::line_descriptor;
+using namespace std;
 void mergeKeyLineCaseSSEE(KeyLine &line1, const KeyLine &line2) {
     float SX1 = line1.startPointX, SY1 = line1.startPointY, SX2 = line2.startPointX, SY2 = line2.startPointY;
     float EX1 = line1.endPointX, EY1 = line1.endPointY, EX2 = line2.endPointX, EY2 = line2.endPointY;
@@ -99,7 +84,7 @@ void mergeKeyLineCaseSSEE(KeyLine &line1, const KeyLine &line2) {
  * the merged line should be those two endpoints that far-est to each other.
  * Still, merge line2 into line1
  */
-void mergeKeyLine(KeyLine &line1, const KeyLine &line2) {
+void mergeKeyLine2(KeyLine &line1, const KeyLine &line2) {
 
     float SX1 = line1.startPointX, SY1 = line1.startPointY, SX2 = line2.startPointX, SY2 = line2.startPointY;
     float EX1 = line1.endPointX, EY1 = line1.endPointY, EX2 = line2.endPointX, EY2 = line2.endPointY;
@@ -166,84 +151,13 @@ void mergeKeyLine(KeyLine &line1, const KeyLine &line2) {
     line1.size = (line1.startPointX - line1.endPointX) * (line1.startPointY - line1.endPointY);
 }
 
-int main(int argc, char **argv) {
-    bool compare = false;
-    if (argc == 3)
-        compare = true;
-    cout << "argc num " << argc << " , " << argv[1] << " " << argv[2] << endl;
-    /* get parameters from comand line */
-    CommandLineParser parser(argc, argv, keys);
-    String image_path = parser.get<String>(0);
-    if (image_path.empty())
-        return -1;
-    /* load image */
-    cv::Mat imageMat = imread(image_path, 1);
-    if (imageMat.data == nullptr) {
-        std::cout << "Error, image could not be loaded. Please, check its path" << std::endl;
-        return -1;
-    }
-    /* create a random binary mask */   //what is the mask for?
-    cv::Mat mask = Mat::ones(imageMat.size(), CV_8UC1);
-    /* create a pointer to a BinaryDescriptor object with deafult parameters */
-    Ptr<BinaryDescriptor> bd = BinaryDescriptor::createBinaryDescriptor();
-    /* create a structure to store extracted lines */
-    vector<KeyLine> keylines;
-    cv::Mat output_bd = imageMat.clone();
-    cv::Mat output_bd_merge = imageMat.clone();
-    bd->detect(imageMat, keylines, mask);
-    /* compute descriptors */
-    cv::Mat descriptors;
-    bd->compute(imageMat, keylines, descriptors);
-    /* draw lines extracted from octave 0 */
-    if (output_bd.channels() == 1)
-        cvtColor(output_bd, output_bd, COLOR_GRAY2BGR);
-
-    /* print all keylines attribution */
-//    for (int i = 0; i < keylines.size(); i++) {
-//        cout << "keyline No." << keylines[i].class_id << " with angle " << keylines[i].angle
-//             << " response " << keylines[i].response << " length :" << keylines[i].lineLength
-//             << " start point " << keylines[i].startPointX << " " << keylines[i].startPointY
-//             << " end point " << keylines[i].endPointX << " " << keylines[i].endPointY
-//             <<endl;
-//    }
-
-    /* show */
-    for (size_t i = 0; i < keylines.size(); i++) {
-        KeyLine kl = keylines[i];
-        if (kl.octave == 0) {
-            /* get a random color */
-            int R = (rand() % (int) (255 + 1));
-            int G = (rand() % (int) (255 + 1));
-            int B = (rand() % (int) (255 + 1));
-            /* get extremes of line */
-            Point pt1 = Point2f(kl.startPointX, kl.startPointY);
-            Point pt2 = Point2f(kl.endPointX, kl.endPointY);
-            /* draw line */
-            line(output_bd, pt1, pt2, Scalar(B, G, R), 3);
-        }
-    }
-    imshow("BD keylines original", output_bd);
-    waitKey();
-
-    std::vector<bool> keylineMergeFlags(keylines.size(), false);
+/*
+ * merge the primary keylines
+ */
+void mergeKeyLine1(vector<KeyLine> &keylines, vector<bool> &keylineMergeFlags){
     for (int i = 0; i < keylines.size(); i++) {
         if (keylineMergeFlags[i])//If this keyline has been merge into another
             continue;
-        cout << "keyline1 No." << keylines[i].class_id << " with angle " << keylines[i].angle
-             << " response " << keylines[i].response << " length :" << keylines[i].lineLength
-             << " start point " << keylines[i].startPointX << " " << keylines[i].startPointY
-             << " end point " << keylines[i].endPointX << " " << keylines[i].endPointY << endl;
-        /* draw it on the image */
-//        if (keylines[i].octave == 0) {
-//            /* get extremes of line */
-//            Point pt1 = Point2f(keylines[i].startPointX, keylines[i].startPointY);
-//            Point pt2 = Point2f(keylines[i].endPointX, keylines[i].endPointY);
-//            /* draw line */
-//            line(output_bd_merge, pt1, pt2, Scalar(255, 0, 0), 3);
-//            //imshow("BD lines merged", output_bd_merge);
-//            //waitKey();
-//        }
-
         //looking for pairs
         for (int j = 0; j < keylines.size(); j++) {
             if (!keylineMergeFlags[j] && j != i) { //This keyline shouldn't be merged into another | and j!=i
@@ -251,21 +165,21 @@ int main(int argc, char **argv) {
                 float degree2 = abs(keylines[j].angle - keylines[i].angle);
                 if ((abs(degree1 - 3.14) < degreeThres) || degree2 < degreeThres) {//angle < 5 degrees
                     float distanceSS = (keylines[i].startPointX - keylines[j].startPointX) *
-                                        (keylines[i].startPointX - keylines[j].startPointX) +
-                                        (keylines[i].startPointY - keylines[j].startPointY) *
-                                        (keylines[i].startPointY - keylines[j].startPointY);
+                                       (keylines[i].startPointX - keylines[j].startPointX) +
+                                       (keylines[i].startPointY - keylines[j].startPointY) *
+                                       (keylines[i].startPointY - keylines[j].startPointY);
                     float distanceSE = (keylines[i].startPointX - keylines[j].endPointX) *
-                                        (keylines[i].startPointX - keylines[j].endPointX) +
-                                        (keylines[i].startPointY - keylines[j].endPointY) *
-                                        (keylines[i].startPointY - keylines[j].endPointY);
+                                       (keylines[i].startPointX - keylines[j].endPointX) +
+                                       (keylines[i].startPointY - keylines[j].endPointY) *
+                                       (keylines[i].startPointY - keylines[j].endPointY);
                     float distanceES = (keylines[i].endPointX - keylines[j].startPointX) *
-                                        (keylines[i].endPointX - keylines[j].startPointX) +
-                                        (keylines[i].endPointY - keylines[j].startPointY) *
-                                        (keylines[i].endPointY - keylines[j].startPointY);
+                                       (keylines[i].endPointX - keylines[j].startPointX) +
+                                       (keylines[i].endPointY - keylines[j].startPointY) *
+                                       (keylines[i].endPointY - keylines[j].startPointY);
                     float distanceEE = (keylines[i].endPointX - keylines[j].endPointX) *
-                                        (keylines[i].endPointX - keylines[j].endPointX) +
-                                        (keylines[i].endPointY - keylines[j].endPointY) *
-                                        (keylines[i].endPointY - keylines[j].endPointY);
+                                       (keylines[i].endPointX - keylines[j].endPointX) +
+                                       (keylines[i].endPointY - keylines[j].endPointY) *
+                                       (keylines[i].endPointY - keylines[j].endPointY);
                     float midXi = (keylines[i].startPointX + keylines[i].endPointX) / 2;
                     float midYi = (keylines[i].startPointY + keylines[i].endPointY) / 2;
                     float midXj = (keylines[j].startPointX + keylines[j].endPointX) / 2;
@@ -278,6 +192,10 @@ int main(int argc, char **argv) {
                     if (distanceES < distanceThres)ES = true;
                     if (distanceMid < distanceThres)Mid = true;
                     if (SS || SE || EE || ES || Mid) {//start or end points is close
+                        cout << "keyline1 No." << keylines[i].class_id << " with angle " << keylines[i].angle
+                             << " response " << keylines[i].response << " length :" << keylines[i].lineLength
+                             << " start point " << keylines[i].startPointX << " " << keylines[i].startPointY
+                             << " end point " << keylines[i].endPointX << " " << keylines[i].endPointY << endl;
                         cout << "merge with" << endl;
                         cout <<" degree1 "<<degree1<<" degree2 "<<degree2<<endl;
                         cout << "keyline2 No." << keylines[j].class_id << " with angle " << keylines[j].angle
@@ -294,7 +212,7 @@ int main(int argc, char **argv) {
 //                            imshow("BD lines merged", output_bd_merge);
 //                            waitKey();
 //                        }
-                        mergeKeyLine(keylines[i], keylines[j]);
+                        mergeKeyLine2(keylines[i], keylines[j]);
                         keylineMergeFlags[j] = true;
                         cout << "result : " << endl;
                         cout << "keyline new1 No." << keylines[i].class_id << " with angle " << keylines[i].angle
@@ -318,38 +236,4 @@ int main(int argc, char **argv) {
             }
         }
     }
-
-    /* select the lines with enough length */
-    vector<KeyLine> selectedKeyLines;
-    for (int i = 0; i < keylines.size(); i++) {
-        if (keylineMergeFlags[i] == true)
-            continue;
-        if(keylines[i].lineLength>lineLength){
-            selectedKeyLines.push_back(keylines[i]);
-        }
-    }
-    /* show */
-    for (size_t i = 0; i < selectedKeyLines.size(); i++) {
-        KeyLine kl = selectedKeyLines[i];
-        cout << "selected keyline No." << keylines[i].class_id << " with angle " << keylines[i].angle
-             << " response " << keylines[i].response << " length :" << keylines[i].lineLength
-             << " start point " << keylines[i].startPointX << " " << keylines[i].startPointY
-             << " end point " << keylines[i].endPointX << " " << keylines[i].endPointY
-             << endl;
-        if (kl.octave == 0) {
-            /* get a random color */
-            int R = (rand() % (int) (255 + 1));
-            int G = (rand() % (int) (255 + 1));
-            int B = (rand() % (int) (255 + 1));
-            /* get extremes of line */
-            Point pt1 = Point2f(kl.startPointX, kl.startPointY);
-            Point pt2 = Point2f(kl.endPointX, kl.endPointY);
-            /* draw line */
-            line(output_bd_merge, pt1, pt2, Scalar(B, G, R), 3);
-        }
-    }
-    imshow("BD lines merged", output_bd_merge);
-    waitKey();
-
-    cout << "system ended" << endl;
 }

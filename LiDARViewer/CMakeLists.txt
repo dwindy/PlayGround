@@ -13,14 +13,14 @@ include_directories( ${PCL_INCLUDE_DIRS} )
 add_definitions( ${PCL_DEFINITIONS} )
 link_directories( ${PCL_LIBRARY_DIRS} )
 
-add_executable(LiDARViewer main.cpp tic_toc.h)
+add_executable(LiDARViewer main.cpp tic_toc.h LSD_merge.h LSD_merge.cpp LSD_merge.h)
 target_link_libraries(LiDARViewer ${Pangolin_LIBRARIES} ${OpenCV_LIBS} ${PCL_LIBRARIES})
 
-add_executable(CannyViewer canny.cpp LSD_merge.cpp)
+add_executable(CannyViewer canny.cpp LSD_merge_main.cpp LSD_merge.cpp)
 target_link_libraries(CannyViewer ${OpenCV_LIBS})
 
 add_executable(LSDViewer LSD_demo.cpp)
 target_link_libraries(LSDViewer ${OpenCV_LIBS})
 
-add_executable(mergeLSD LSD_merge.cpp)
+add_executable(mergeLSD LSD_merge_main.cpp LSD_merge.cpp LSD_merge.h)
 target_link_libraries(mergeLSD ${OpenCV_LIBS})
