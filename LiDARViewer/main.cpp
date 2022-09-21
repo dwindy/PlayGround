@@ -12,6 +12,11 @@
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/search/search.h>
+#include <pcl/search/kdtree.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/segmentation/region_growing.h>
+#include <pcl/segmentation/sac_segmentation.h>
 #include "tic_toc.h"
 ///Line features
 #include "LSD_merge.h"
@@ -20,9 +25,65 @@ using namespace std;
 using namespace cv;
 using namespace cv::line_descriptor;
 
-typedef pcl::PointXYZI PointType;
+//typedef pcl::PointXYZI PointType;
 
+//Plane
+class Plane {
+public:
+    //Ax + By + Cz = D ; D > 0
+    double A, B, C, D;
+    /**
+    * (phi, theta, d) | (nx,ny,nz,d)
+    * phi = arctan(ny/nx), theta = arccos(nz) ?
+    * A = cos(phi)cos(theta), B = sin(phi)cos(tehta), C = -sin(theta)
+    */
+    double phi, theta, dis; //should change to radian
+    Eigen::Vector3d PI;
+    int count;
+    int PlaneId;//Id in cur frame
+    int IdGlobal;//In in map/global
+    Plane(double Ain, double Bin, double Cin, double Din) : A(Ain), B(Bin), C(Cin), D(Din) {
+        PlaneId = -1;
+        count = -1;
+        IdGlobal = -1;
+//        NormD2CP();
+//        NormD2CP();
+    }
 
+    Plane(double phiin, double thetain, double disin) : phi(phiin), theta(thetain), dis(disin) {
+        PlaneId = -1;
+        count = -1;
+        IdGlobal = -1;
+    }
+
+    Plane(Eigen::Vector3d PIin) : PI(PIin) {
+        PlaneId = -1;
+        count = -1;
+        IdGlobal = -1;
+    }
+
+    Plane() {
+        PlaneId = -1;
+        count = -1;
+        IdGlobal = -1;
+    }
+
+    //not in use now. find plane contour?
+    void foundContour(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud);
+
+//    //void Norm2Angle();
+//    void Norm2Radian();
+//
+//    void NormD2CP();
+
+    cv::Point3d centreP;//the mean of all points
+//        vector<cv::Point3d> pointList;
+//        vector<cv::Point2d> pointList2D;
+    vector<int> keyPointList; //todo store keypoint in this plane
+    vector<int> mindices;     //todo indexs of keypoint in image
+    // Some funcs
+    void oplus(const Eigen::Vector3d &v);
+};
 
 ///LiDAR Related Parameters
 int N_SCANS = 64;
@@ -33,11 +94,11 @@ int cloudNeighborPicked[400000];
 int cloudLabel[400000];
 //Todo the parameter above should define in some other places
 bool comp (int i,int j) { return (cloudCurvature[i]<cloudCurvature[j]); }
-pcl::PointCloud<PointType> mCornerPointsSharp;
-pcl::PointCloud<PointType> mCornerPointsLessSharp;
-pcl::PointCloud<PointType> mSurfPointsFlat;
-pcl::PointCloud<PointType> mSurfPointsLessFlat;
-std::vector<pcl::PointCloud<PointType>> laserCloud16Scans(N_SCANS/4);
+pcl::PointCloud<pcl::PointXYZI> mCornerPointsSharp;
+pcl::PointCloud<pcl::PointXYZI> mCornerPointsLessSharp;
+pcl::PointCloud<pcl::PointXYZI> mSurfPointsFlat;
+pcl::PointCloud<pcl::PointXYZI> mSurfPointsLessFlat;
+std::vector<pcl::PointCloud<pcl::PointXYZI>> laserCloud16Scans(N_SCANS/4);
 
 ///Camera LiDAR Calibration Parameters
 double Rcl00 = 0.007533745;
@@ -84,8 +145,8 @@ struct point3d{
     float y;
     float z;
     int id3d;
-    int indexScani;
-    int indexScanj;
+    int indexScani;//i-th scan of 64 scan lines
+    int indexScanj;//j-th point of i-th scan
 };
 
 void readLaserPoints(string const fileName, vector<vector<float>> &laserPoints) {
@@ -185,8 +246,8 @@ void ExtractLiDARFeature(vector<vector<float>> mLaserPoints) {
     //printf("end Ori %f\n", endOri);
     bool halfPassed = false;
     int count = cloudSize;
-    PointType point;
-    std::vector<pcl::PointCloud<PointType>> laserCloudScans(N_SCANS);
+    pcl::PointXYZI point;
+    std::vector<pcl::PointCloud<pcl::PointXYZI>> laserCloudScans(N_SCANS);
     // 遍历每一个点
     for (int i = 0; i < cloudSize; i++) {
         point.x = laserCloudIn.points[i].x;
@@ -263,7 +324,7 @@ void ExtractLiDARFeature(vector<vector<float>> mLaserPoints) {
     cloudSize = count;
     printf("points size %d \n", cloudSize);
 
-    pcl::PointCloud<PointType>::Ptr laserCloud(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloud(new pcl::PointCloud<pcl::PointXYZI>());
     cout<<laserCloud->size()<<endl;
     // 全部集合到一个点云里面去，但是使用两个数组标记starts和end，这里分别+5和-6是为了计算曲率方便
     // For example, 0th line contains 1000 points. the scanStartInd[0] = 5; the scanEndInd[0] = 994;
@@ -298,10 +359,10 @@ void ExtractLiDARFeature(vector<vector<float>> mLaserPoints) {
 
     TicToc t_pts;
 
-    pcl::PointCloud <PointType> cornerPointsSharp;
-    pcl::PointCloud <PointType> cornerPointsLessSharp;
-    pcl::PointCloud <PointType> surfPointsFlat;
-    pcl::PointCloud <PointType> surfPointsLessFlat;
+    pcl::PointCloud <pcl::PointXYZI> cornerPointsSharp;
+    pcl::PointCloud <pcl::PointXYZI> cornerPointsLessSharp;
+    pcl::PointCloud <pcl::PointXYZI> surfPointsFlat;
+    pcl::PointCloud <pcl::PointXYZI> surfPointsLessFlat;
 
     float t_q_sort = 0;
     // 遍历每个scan
@@ -312,7 +373,7 @@ void ExtractLiDARFeature(vector<vector<float>> mLaserPoints) {
             if (scanEndInd[i] - scanStartInd[i] < 6) //this scan soo small
                 continue;
             // 用来存储不太平整的点
-            pcl::PointCloud<PointType>::Ptr surfPointsLessFlatScan(new pcl::PointCloud<PointType>);
+            pcl::PointCloud<pcl::PointXYZI>::Ptr surfPointsLessFlatScan(new pcl::PointCloud<pcl::PointXYZI>);
             // 将每个scan等分成6等分
             for (int j = 0; j < 6; j++) {
                 // 每个等分的起始和结束点
@@ -426,9 +487,9 @@ void ExtractLiDARFeature(vector<vector<float>> mLaserPoints) {
                 //In some special case, like corner points number is far more than 20, we just select 20, some of the corner point will be label 0 !!!
             }
 
-            pcl::PointCloud<PointType> surfPointsLessFlatScanDS;
+            pcl::PointCloud<pcl::PointXYZI> surfPointsLessFlatScanDS;
             surfPointsLessFlatScanDS.resize(100000);
-            pcl::VoxelGrid<PointType> downSizeFilter;
+            pcl::VoxelGrid<pcl::PointXYZI> downSizeFilter;
             // 一般平坦的点比较多，所以这里做一个体素滤波
             downSizeFilter.setInputCloud(surfPointsLessFlatScan);
             downSizeFilter.setLeafSize(0.2, 0.2, 0.2);
@@ -452,6 +513,63 @@ void ExtractLiDARFeature(vector<vector<float>> mLaserPoints) {
     printf("Corner Pt: %lu, Less Corner :%luu, Flat Pt: %lu, Less Flat Pt : %lu \n", mCornerPointsSharp.size(),
            mCornerPointsLessSharp.size(), mSurfPointsFlat.size(), mSurfPointsLessFlat.size());
     int pause = 1;
+}
+
+/**
+ * input a pointcloud, run RANSAC to fit a plane, return inliner number
+ * @param in : cloud datasource
+ * @param in&out : foundPlane, to fill up
+ * @param in&out : inliersOutput
+ * @return inliner point number
+ */
+int RANSACPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, Plane &foundPlane,
+                       pcl::PointIndices &inliersOutput) {
+    //pcl::PointCloud<pcl::PointXYZ>::Ptr cloud = inputCloud.makeShared();
+    pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+    //create the segmentation objects
+    pcl::SACSegmentation<pcl::PointXYZ> seg;
+    //Optional
+    seg.setOptimizeCoefficients(true);
+    //Mandatory
+    seg.setMethodType(pcl::SACMODEL_PLANE);
+    seg.setModelType(pcl::SAC_RANSAC);
+    seg.setDistanceThreshold(0.05);
+
+    seg.setInputCloud(cloud);
+    seg.segment(*inliers, *coefficients);
+    if (inliers->indices.size() == 0)
+        return 0;
+    inliersOutput = *inliers;
+    foundPlane.A = coefficients->values[0];
+    foundPlane.B = coefficients->values[1];
+    foundPlane.C = coefficients->values[2];
+    foundPlane.D = coefficients->values[3];
+    /** AX+BY+CZ+D=0
+     *  change to form AX+BY+CZ = -D
+     *  And make sure (-D)>0 to adjust the Norm direction?
+     */
+    if (foundPlane.D < 0) {
+        foundPlane.A = -foundPlane.A;
+        foundPlane.B = -foundPlane.B;
+        foundPlane.C = -foundPlane.C;
+        foundPlane.D = -foundPlane.D;
+    }
+    double sumX = 0, sumY = 0, sumZ = 0;
+    for (size_t i = 0; i < inliers->indices.size(); i++) {
+        double x = cloud->points[inliers->indices[i]].x;
+        double y = cloud->points[inliers->indices[i]].y;
+        double z = cloud->points[inliers->indices[i]].z;
+        sumX += x;
+        sumY += y;
+        sumZ += z;
+        //cv::Point3d newP = cv::Point3d(x, y, z);
+    }
+//    foundPlane.Norm2Radian();
+//    foundPlane.NormD2CP();
+    foundPlane.centreP = cv::Point3d(sumX / inliers->indices.size(), sumY / inliers->indices.size(),
+                                     sumZ / inliers->indices.size());
+    return inliers->indices.size();
 }
 
 /**
@@ -513,7 +631,7 @@ void ProjectLiDARtoCam(vector<vector<float>> LiDARPoints, vector<point3d> &LiDAR
 /**
  * @brief Project LiDAR Points and Features (PCL pointset) to Camera coordination system
  */
-void ProjectLiDARtoCam(std::vector<pcl::PointCloud<PointType>> laserCloud14Scans, vector<point3d> &LiDARPoints_Cam) {
+void ProjectLiDARtoCam(std::vector<pcl::PointCloud<pcl::PointXYZI>> laserCloud14Scans, vector<point3d> &LiDARPoints_Cam, vector<point3d> &GroundPoints_Cam) {
     cv::Mat mTcamlid = cv::Mat::eye(4, 4, CV_64F);
     mTcamlid.at<double>(0, 0) = Rcl00;
     mTcamlid.at<double>(0, 1) = Rcl01;
@@ -557,6 +675,8 @@ void ProjectLiDARtoCam(std::vector<pcl::PointCloud<PointType>> laserCloud14Scans
                 newP.indexScani = i;
                 newP.indexScanj = li;
                 LiDARPoints_Cam.push_back(newP);
+                if(laserCloud14Scans[i].points[li].z<-1.7)
+                    GroundPoints_Cam.push_back(newP);
             }
         }
     }
@@ -565,7 +685,7 @@ void ProjectLiDARtoCam(std::vector<pcl::PointCloud<PointType>> laserCloud14Scans
 /**
  * @brief Project LiDAR Points and Features (PCL pointset) to Camera coordination system
  */
-void ProjectLiDARtoCam(pcl::PointCloud<PointType> LiDARFeatures, vector<point3d> &LiDARPoints_Cam) {
+void ProjectLiDARtoCam(pcl::PointCloud<pcl::PointXYZI> LiDARFeatures, vector<point3d> &LiDARPoints_Cam, vector<point3d> &GroundPoints_Cam) {
     cv::Mat mTcamlid = cv::Mat::eye(4, 4, CV_64F);
     mTcamlid.at<double>(0, 0) = Rcl00;
     mTcamlid.at<double>(0, 1) = Rcl01;
@@ -605,7 +725,10 @@ void ProjectLiDARtoCam(pcl::PointCloud<PointType> LiDARFeatures, vector<point3d>
                 newP.x = P_cam.at<double>(0, 0);
                 newP.y = P_cam.at<double>(1, 0);
                 newP.z = P_cam.at<double>(2, 0);
+                //newP.intensity?
                 LiDARPoints_Cam.push_back(newP);
+                if(newP.z<-1.7)
+                    GroundPoints_Cam.push_back(newP);
             }
         }
 }
@@ -614,7 +737,7 @@ void ProjectLiDARtoCam(pcl::PointCloud<PointType> LiDARFeatures, vector<point3d>
  * LiDAR under Cam coordination
  * Project to Image
  */
-void ProjectLiDARtoImg(int cols, int rows, vector<point3d> LiDARPoints, vector<point2d> &LiDARonImg, vector<point2d> &LiDARFloor) {
+void ProjectLiDARtoImg(int cols, int rows, vector<point3d> LiDARPoints, vector<point2d> &LiDARonImg) {
     //it seems like OpenCV upgraded, then the func changed?
     //cv::Mat P_rect_00 = cv::Mat::zeros(CvSize(4, 3), CV_64F);
     cv::Mat P_rect_00 = cv::Mat::zeros(3,4,CV_64F);
@@ -654,9 +777,6 @@ void ProjectLiDARtoImg(int cols, int rows, vector<point3d> LiDARPoints, vector<p
 //        mLaserPt_cam[pi].index2d = counter;
         LiDARonImg.push_back(pt);
         counter++;
-        if(LiDARPoints[pi].z<0.1){
-            cout<<LiDARPoints[pi].x<<" "<<LiDARPoints[pi].y<<" "<<LiDARPoints[pi].z<<endl;
-        }
     }
     //Test
 //    X.at<double>(0, 0) = 3;
@@ -670,6 +790,135 @@ void ProjectLiDARtoImg(int cols, int rows, vector<point3d> LiDARPoints, vector<p
     //TODO Check why the Projected LiDAR points are under some certain height
     cout << "Lidar points total : " << LiDARPoints.size() << " in image frame : " << counter << endl;
 }
+
+
+/**
+ * @brief fitting a plane for lidar point on road
+ */
+bool PlaneFitting(vector<point3d> point3ds, vector<point2d> point2ds, cv::Mat im) {
+    cv::Mat testIMG = im.clone();
+    ///Step 1 store all 14 lines into a container
+    pcl::PointCloud<pcl::PointXYZ>::Ptr allPoints(new pcl::PointCloud<pcl::PointXYZ>);
+    allPoints->resize(point3ds.size());
+    int actualNum = 0;
+    for (int i = 0; i < point3ds.size(); i++) {
+        allPoints->points[actualNum].x = point3ds[i].x;
+        allPoints->points[actualNum].y = point3ds[i].y;
+        allPoints->points[actualNum].z = point3ds[i].z;
+        //allPoints->points[actualNum].intensity = laserCloud14Scans[i].points[j].intensity;
+        actualNum++;
+
+        cv::circle(testIMG,cv::Point(point2ds[i].x,point2ds[i].y),10,cv::Scalar(255,0,0),1);
+        imshow("check ground points",testIMG);
+        waitKey(1);
+    }
+    imshow("check ground points",testIMG);
+
+    allPoints->resize(actualNum);
+    cout<<" ground floor points "<<actualNum<<endl;
+    //Step 2 DownSampling and calc norm
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud14DwSpl(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::VoxelGrid<pcl::PointXYZ> sor;
+    sor.setInputCloud(allPoints);
+    sor.setLeafSize(0.1f,0.1f,0.1f);
+    sor.filter(*cloud14DwSpl);
+    cout<<" downsample ground floor points "<<cloud14DwSpl->points.size()<<endl;
+    vector<point2d> downsample2d;
+    vector<point3d> downsample3d;
+    for(int i = 0 ; i < cloud14DwSpl->size();i++){
+        point3d newpoint;
+        newpoint.x = cloud14DwSpl->points[i].x;
+        newpoint.y = cloud14DwSpl->points[i].y;
+        newpoint.z = cloud14DwSpl->points[i].z;
+        downsample3d.push_back(newpoint);
+    }
+    ProjectLiDARtoImg(im.cols, im.rows, downsample3d, downsample2d);
+    for (int i = 0; i < downsample2d.size(); i++) {
+        cv::circle(testIMG,cv::Point(downsample2d[i].x,downsample2d[i].y),7,cv::Scalar(0,0,255),1);
+        imshow("check ground points",testIMG);
+        waitKey(1);
+    }
+    imshow("check ground points",testIMG);
+    waitKey(1);
+
+    //Calc norms
+    pcl::search::Search<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+    pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+    pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> normal_estimator;
+    normal_estimator.setSearchMethod(tree);
+    normal_estimator.setInputCloud(cloud14DwSpl);
+    normal_estimator.setKSearch(100);
+    normal_estimator.compute(*normals);
+    //Step3 Region Growing
+    pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> reg;
+    reg.setMinClusterSize(200);
+    reg.setMaxClusterSize(10000);
+    reg.setSearchMethod(tree);
+    reg.setNumberOfNeighbours(200);
+    reg.setInputCloud(cloud14DwSpl);
+    reg.setInputNormals(normals);
+    reg.setSmoothnessThreshold(5.0/180.0/M_PI);
+    reg.setCurvatureThreshold(5.0);
+    //extract each cluster
+    std::vector<pcl::PointIndices> clusters;
+    reg.extract(clusters);
+    ///Step 4 RANSAC for each cluster
+    vector<point3d> inliers3d;
+    vector<point2d> inliers2d;
+    for(size_t i = 0; i < clusters.size();i++){
+        pcl::PointCloud<pcl::PointXYZ>::Ptr thisCloud(new pcl::PointCloud<pcl::PointXYZ>);
+        thisCloud->points.resize(clusters[i].indices.size());
+        thisCloud->height = 1;
+        thisCloud->width = clusters[i].indices.size();
+        for (size_t j = 0; j < clusters[i].indices.size(); j++) {
+            thisCloud->points[j].x = cloud14DwSpl->points[clusters[i].indices[j]].x;
+            thisCloud->points[j].y = cloud14DwSpl->points[clusters[i].indices[j]].y;
+            thisCloud->points[j].z = cloud14DwSpl->points[clusters[i].indices[j]].z;
+            //cout<<" cluster point "<<thisCloud->points[index].x<<" "<<thisCloud->points[index].y<<" "<<thisCloud->points[index].z<<endl;
+            point3d newpoint;
+            newpoint.x = thisCloud->points[j].x;
+            newpoint.y = thisCloud->points[j].y;
+            newpoint.z = thisCloud->points[j].z;
+            inliers3d.push_back(newpoint);
+        }
+        cout<<"region growing points "<<inliers3d.size()<<endl;
+        ProjectLiDARtoImg(im.cols, im.rows, inliers3d, inliers2d);
+        for (int j = 0; j < inliers2d.size(); j++) {
+            cv::circle(testIMG,cv::Point(inliers2d[j].x,inliers2d[j].y),5,cv::Scalar(0,255,0),1);
+            imshow("check ground points",testIMG);
+            waitKey(1);
+        }
+        imshow("check ground points",testIMG);
+        //waitKey(0);
+
+        Plane foundPlane;
+        pcl::PointIndices inlierPoints;
+        int intPlaneNum = RANSACPlane(thisCloud, foundPlane, inlierPoints);
+        cout<<intPlaneNum<<" out of "<<thisCloud->points.size()<<" in RANSAC ground plane "<<endl;
+        cout<<"plane attribution "<<foundPlane.A<<" "<<foundPlane.B<<" "<<foundPlane.C<<" "<<foundPlane.D<<endl;
+        vector<point3d> ransac3d;
+        vector<point2d> ransac2d;
+        for(int j=0;j<inlierPoints.indices.size();j++){
+            point3d newpoint;
+            newpoint.x = thisCloud->points[inlierPoints.indices[j]].x;
+            newpoint.y = thisCloud->points[inlierPoints.indices[j]].y;
+            newpoint.z = thisCloud->points[inlierPoints.indices[j]].z;
+            ransac3d.push_back(newpoint);
+        }
+        ProjectLiDARtoImg(im.cols, im.rows, ransac3d, ransac2d);
+        for (int j = 0; j < ransac2d.size(); j++) {
+            cv::circle(testIMG,cv::Point(ransac2d[j].x,ransac2d[j].y),1,cv::Scalar(255,255,0));
+            imshow("check ground points",testIMG);
+            waitKey(1);
+        }
+        imshow("check ground points",testIMG);
+        //waitKey(0);
+
+        return true;
+    }
+    return false;
+}
+
 
 void drawImage(cv::Mat &im, vector<point2d> LiDAR2d, vector<point2d> ImageFeatures){
     for (int i = 0; i < LiDAR2d.size(); i++) {
@@ -922,12 +1171,15 @@ int main() {
     cv::Mat im = cv::imread(ImageAddress, CV_LOAD_IMAGE_UNCHANGED);
     cout<<"image cols "<<im.cols<<" rows "<<im.rows<<endl;
     vector<point3d> LiDARPoints_Cam;//Lidar point under cam coordination system
+    vector<point3d> LiDARGroundPoints_Cam;//on ground floor point
     //ProjectLiDARtoCam(laserPoints, LiDARPoints_Cam);
-    ProjectLiDARtoCam(laserCloud16Scans, LiDARPoints_Cam);//project 16 lines
+    ProjectLiDARtoCam(laserCloud16Scans, LiDARPoints_Cam, LiDARGroundPoints_Cam);//project 16 lines
     //cout<<"LiDARPoints on Cam Size :"<<LiDARPoints_Cam.size()<<endl;
     vector<point2d> LiDAR2d;//Lidar point in 2d image
     vector<point2d> LiDARfloor;
-    ProjectLiDARtoImg(im.cols, im.rows, LiDARPoints_Cam, LiDAR2d, LiDARfloor);
+    ProjectLiDARtoImg(im.cols, im.rows, LiDARPoints_Cam, LiDAR2d);
+    ProjectLiDARtoImg(im.cols, im.rows, LiDARGroundPoints_Cam, LiDARfloor);
+    cout<<"gournd point number "<<LiDARGroundPoints_Cam.size()<<endl;
     ///Read Image Key pt
     vector<point2d> ImgKeyPoint;//Lidar point in image
     ifstream keyReader;
@@ -994,119 +1246,122 @@ int main() {
     ///Step 3 connect feature point and feature line
     connectPointsLines(output_bd_merge, selectedKeyLines, ImgKeyPoint, LiDAR2d);
 
-    ///Step 4 show point cloud
-    //todo thread show point clouds
-    //cv::circle(im, cv::Point2f(470, 359), 3, cv::Scalar(0, 200, 200), -1);
+    ///Step 4 calc road plane
+    PlaneFitting(LiDARGroundPoints_Cam, LiDARfloor, im);
+
+    ///Step 5 show point cloud
+//    //todo thread show point clouds
+//    //cv::circle(im, cv::Point2f(470, 359), 3, cv::Scalar(0, 200, 200), -1);
     drawImage(im,LiDAR2d,ImgKeyPoint);
-    cv::imshow("ORB-SLAM2: Current Frame",im);
-    cv::waitKey(0);
-    ///show------------LiDAR-----------
-    pangolin::CreateWindowAndBind("Main", 640, 480);
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    pangolin::OpenGlRenderState s_cam(
-            pangolin::ProjectionMatrix(640, 480, 420, 420, 320, 320, 0.2, 100),
-            pangolin::ModelViewLookAt(2, 0, 2, 0, 0, 0, pangolin::AxisY)
-    );
-
-    pangolin::Handler3D handler(s_cam);
-    pangolin::View &d_cam = pangolin::CreateDisplay()
-            .SetBounds(0.0, 1.0, 0.0, 1.0, -640.0f / 480.0f)
-            .SetHandler(&handler);
-    //while (!pangolin::ShouldQuit()) {
-    while (cvWaitKey(1)) {
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        d_cam.Activate(s_cam);
-
-        //需要绘制的东西写在这里
-        //coordinate frame
-        glBegin(GL_LINES);
-        glLineWidth(5.0);
-        glColor3f(1, 0, 0);
-        glVertex3d(0.1, 0, 0);
-        glVertex3d(0, 0, 0);
-        glColor3f(0, 1, 0);
-        glVertex3d(0, 0.1, 0);
-        glVertex3d(0, 0, 0);
-        glColor3f(0, 0, 1);
-        glVertex3d(0, 0, 0.1);
-        glVertex3d(0, 0, 0);
-        glEnd();
-
-        for (int li = 0; li < laserCloud16Scans.size(); li++) {
-            glBegin(GL_POINTS);
-            for (int ci = 0; ci < laserCloud16Scans[li].size(); ci++) {
-                if (laserCloud16Scans[li].points[ci].x > 0) {
-                    glColor3f(1, 1, 1); //60 20 220
-                    if (laserCloud16Scans[li].points[ci].z < -1.7) {
-                        glColor3f(0, 1, 1); //60 20 220
-                    }
-                    glVertex3d(laserCloud16Scans[li].points[ci].x,
-                               laserCloud16Scans[li].points[ci].y,
-                               laserCloud16Scans[li].points[ci].z);
-                }
-            }
-            glEnd();
-        }
-        for(int i =0; i < LiDAR2d.size();i++){
-            glBegin(GL_POINTS);
-            glColor3f(1, 0, 0); //60 20 220
-            if(LiDAR2d[i].index2line>-1){
-                int indexLine = LiDAR2d[i].indexScani;
-                int indexPoint = LiDAR2d[i].indexScanj;
-                glVertex3d(laserCloud16Scans[indexLine].points[indexPoint].x, laserCloud16Scans[indexLine].points[indexPoint].y,
-                           laserCloud16Scans[indexLine].points[indexPoint].z);
-            }
-            glEnd();
-        }
-
-//        for (int ci = 0; ci < laserPoints.size(); ci++) {
+//    cv::imshow("ORB-SLAM2: Current Frame",im);
+//    cv::waitKey(0);
+//    ///show------------LiDAR-----------
+//    pangolin::CreateWindowAndBind("Main", 640, 480);
+//    glEnable(GL_DEPTH_TEST);
+//    glEnable(GL_BLEND);
+//    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+//
+//    pangolin::OpenGlRenderState s_cam(
+//            pangolin::ProjectionMatrix(640, 480, 420, 420, 320, 320, 0.2, 100),
+//            pangolin::ModelViewLookAt(2, 0, 2, 0, 0, 0, pangolin::AxisY)
+//    );
+//
+//    pangolin::Handler3D handler(s_cam);
+//    pangolin::View &d_cam = pangolin::CreateDisplay()
+//            .SetBounds(0.0, 1.0, 0.0, 1.0, -640.0f / 480.0f)
+//            .SetHandler(&handler);
+//    //while (!pangolin::ShouldQuit()) {
+//    while (cvWaitKey(1)) {
+//        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+//        d_cam.Activate(s_cam);
+//
+//        //需要绘制的东西写在这里
+//        //coordinate frame
+//        glBegin(GL_LINES);
+//        glLineWidth(5.0);
+//        glColor3f(1, 0, 0);
+//        glVertex3d(0.1, 0, 0);
+//        glVertex3d(0, 0, 0);
+//        glColor3f(0, 1, 0);
+//        glVertex3d(0, 0.1, 0);
+//        glVertex3d(0, 0, 0);
+//        glColor3f(0, 0, 1);
+//        glVertex3d(0, 0, 0.1);
+//        glVertex3d(0, 0, 0);
+//        glEnd();
+//
+//        for (int li = 0; li < laserCloud16Scans.size(); li++) {
 //            glBegin(GL_POINTS);
-//            glColor3f(1, 1, 1); //60 20 220
-//            glVertex3d(laserPoints[ci][0], laserPoints[ci][1], laserPoints[ci][2]);
+//            for (int ci = 0; ci < laserCloud16Scans[li].size(); ci++) {
+//                if (laserCloud16Scans[li].points[ci].x > 0) {
+//                    glColor3f(1, 1, 1); //60 20 220
+//                    if (laserCloud16Scans[li].points[ci].z < -1.7) {
+//                        glColor3f(0, 1, 1); //60 20 220
+//                    }
+//                    glVertex3d(laserCloud16Scans[li].points[ci].x,
+//                               laserCloud16Scans[li].points[ci].y,
+//                               laserCloud16Scans[li].points[ci].z);
+//                }
+//            }
 //            glEnd();
 //        }
-
-//        for (int ci = 0; ci < mCornerPointsSharp.points.size(); ci++) {
-//            if (mCornerPointsSharp.points[ci].x > 0) {
-//                glBegin(GL_POINTS);
-//                glColor3f(0.8627, 0.078, 0.2352); //60 20 220
-//                glVertex3d(mCornerPointsSharp.points[ci].x, mCornerPointsSharp.points[ci].y,
-//                           mCornerPointsSharp.points[ci].z);
-//                glEnd();
+//        for(int i =0; i < LiDAR2d.size();i++){
+//            glBegin(GL_POINTS);
+//            glColor3f(1, 0, 0); //60 20 220
+//            if(LiDAR2d[i].index2line>-1){
+//                int indexLine = LiDAR2d[i].indexScani;
+//                int indexPoint = LiDAR2d[i].indexScanj;
+//                glVertex3d(laserCloud16Scans[indexLine].points[indexPoint].x, laserCloud16Scans[indexLine].points[indexPoint].y,
+//                           laserCloud16Scans[indexLine].points[indexPoint].z);
 //            }
-//
+//            glEnd();
 //        }
 //
-//        for (int ci = 0; ci < mCornerPointsLessSharp.points.size(); ci++) {
-//            if (mCornerPointsLessSharp.points[ci].x > 0) {
-//                glBegin(GL_POINTS);
-//                glColor3f(1, 0.4117, 0.7058); //180 105 255
-//                glVertex3d(mCornerPointsLessSharp.points[ci].x, mCornerPointsLessSharp.points[ci].y,
-//                           mCornerPointsLessSharp.points[ci].z);
-//                glEnd();
-//            }
-//        }
-
-//        for (int ci = 0; ci < mSurfPointsFlat.points.size(); ci++) {
-//            glBegin(GL_POINTS);
-//            glColor3f(0, 0, 1); //255 0 0
-//            glVertex3d(mSurfPointsFlat.points[ci].x, mSurfPointsFlat.points[ci].y, mSurfPointsFlat.points[ci].z);
-//            glEnd();
-//        }
-
-//        for (int ci = 0; ci < mSurfPointsLessFlat.points.size(); ci++) {
-//            glBegin(GL_POINTS);
-//            glColor3f(0, 1, 1); //255 255 0
-//            glVertex3d(mSurfPointsLessFlat.points[ci].x, mSurfPointsLessFlat.points[ci].y,
-//                       mSurfPointsLessFlat.points[ci].z);
-//            glEnd();
-//        }
-
-        pangolin::FinishFrame();
-    }
+////        for (int ci = 0; ci < laserPoints.size(); ci++) {
+////            glBegin(GL_POINTS);
+////            glColor3f(1, 1, 1); //60 20 220
+////            glVertex3d(laserPoints[ci][0], laserPoints[ci][1], laserPoints[ci][2]);
+////            glEnd();
+////        }
+//
+////        for (int ci = 0; ci < mCornerPointsSharp.points.size(); ci++) {
+////            if (mCornerPointsSharp.points[ci].x > 0) {
+////                glBegin(GL_POINTS);
+////                glColor3f(0.8627, 0.078, 0.2352); //60 20 220
+////                glVertex3d(mCornerPointsSharp.points[ci].x, mCornerPointsSharp.points[ci].y,
+////                           mCornerPointsSharp.points[ci].z);
+////                glEnd();
+////            }
+////
+////        }
+////
+////        for (int ci = 0; ci < mCornerPointsLessSharp.points.size(); ci++) {
+////            if (mCornerPointsLessSharp.points[ci].x > 0) {
+////                glBegin(GL_POINTS);
+////                glColor3f(1, 0.4117, 0.7058); //180 105 255
+////                glVertex3d(mCornerPointsLessSharp.points[ci].x, mCornerPointsLessSharp.points[ci].y,
+////                           mCornerPointsLessSharp.points[ci].z);
+////                glEnd();
+////            }
+////        }
+//
+////        for (int ci = 0; ci < mSurfPointsFlat.points.size(); ci++) {
+////            glBegin(GL_POINTS);
+////            glColor3f(0, 0, 1); //255 0 0
+////            glVertex3d(mSurfPointsFlat.points[ci].x, mSurfPointsFlat.points[ci].y, mSurfPointsFlat.points[ci].z);
+////            glEnd();
+////        }
+//
+////        for (int ci = 0; ci < mSurfPointsLessFlat.points.size(); ci++) {
+////            glBegin(GL_POINTS);
+////            glColor3f(0, 1, 1); //255 255 0
+////            glVertex3d(mSurfPointsLessFlat.points[ci].x, mSurfPointsLessFlat.points[ci].y,
+////                       mSurfPointsLessFlat.points[ci].z);
+////            glEnd();
+////        }
+//
+//        pangolin::FinishFrame();
+//    }
     ///-----------------------------------------
     return 0;
 }
