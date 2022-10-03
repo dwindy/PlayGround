@@ -237,3 +237,174 @@ void mergeKeyLine1(vector<KeyLine> &keylines, vector<bool> &keylineMergeFlags){
         }
     }
 }
+
+/*
+ * pair up the LSD lines, keypoints and 2d lidar points
+ */
+void connectPointsLines(cv::Mat &im, vector<KeyLine> selectedKeyLSDLines, vector<point2d> &imgKeyPoint, vector<point2d> &LiDAR2d) {
+    //todo this should be in a line class ---(y2-y1)x+(x1-x2)y+(x2y1-x1y2)=0
+    vector<vector<float>> keyLineABCs;//store keylines in terms of Ax+By+C = 0;
+    for (int i = 0; i < selectedKeyLSDLines.size(); i++) {
+        float x1 = selectedKeyLSDLines[i].startPointX, y1 = selectedKeyLSDLines[i].startPointY;
+        float x2 = selectedKeyLSDLines[i].endPointX, y2 = selectedKeyLSDLines[i].endPointY;
+        float A = y2 - y1, B = x1 - x2, C = x2 * y1 - x1 * y2;
+        vector<float> thisLine;
+        thisLine.push_back(A);
+        thisLine.push_back(B);
+        thisLine.push_back(C);
+        keyLineABCs.push_back(thisLine);
+    }
+    ///Step 1 pair up LSD lines and ORB keypoints
+    vector<int> keyPt2LSD(imgKeyPoint.size(), -1);
+    for (int i = 0; i < imgKeyPoint.size(); i++) {
+        float x0 = imgKeyPoint[i].x, y0 = imgKeyPoint[i].y;
+        float minDistance1 = 5, minDistance2 = 5, minDistance3 = 5;
+        imgKeyPoint[i].index2line = -1;
+        int index1 = -1, index2 = -1, index3 = -1;
+        for (int j = 0; j < selectedKeyLSDLines.size(); j++) {
+            ///Step 1.1 search for 3 lines
+            ///point to line --- d = abs(Ax0+By0+C) / abs(sqrt(A^2+B^2))
+            float A = keyLineABCs[j][0], B = keyLineABCs[j][1], C = keyLineABCs[j][2];
+            float dis = abs(A * x0 + B * y0 + C) /
+                        sqrt(A * A + B * B);
+            if (dis < minDistance1) {
+                minDistance3 = minDistance2;
+                index3 = index2;
+                minDistance2 = minDistance1;
+                index2 = index1;
+                minDistance1 = dis;
+                index1 = j;
+            } else {
+                if (dis >= minDistance1 && dis < minDistance2) {
+                    minDistance3 = minDistance2;
+                    index3 = index2;
+                    minDistance2 = dis;
+                    index2 = j;
+                } else {
+                    if (dis >= minDistance2 && dis < minDistance3) {
+                        minDistance3 = dis;
+                        index3 = j;
+                    }
+                }
+            }
+        }
+        ///Step 1.2 select nearest line from above 3
+        float disToLineThres = 3; //? not in use current because above 3 line is qualified already
+        float disTo2EndsThres = 1;
+        if (index1 > -1) {
+            //cout<<"point "<<x0<<","<<y0<<" close to "<<keyLineABCs[index][0]<<","<<keyLineABCs[index][1]<<","<<keyLineABCs[index][2]<<endl;
+            ///Candidate 1 --- distance to each endpoints and sum up
+            float x1 = selectedKeyLSDLines[index1].startPointX, y1 = selectedKeyLSDLines[index1].startPointY;
+            float x2 = selectedKeyLSDLines[index1].endPointX, y2 = selectedKeyLSDLines[index1].endPointY;
+            float disToStart = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+            float disToEnd = sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+            float disTo2EndPoints = disToStart + disToEnd;
+            if (disToStart <= disToLineThres || disToEnd <= disToLineThres || disTo2EndPoints <= disTo2EndsThres) {
+                imgKeyPoint[i].index2line = index1;
+            } else {
+                if (index2 > -1) {
+                    ///Candidate 2 --- distance to each endpoints and sum up
+                    x1 = selectedKeyLSDLines[index2].startPointX, y1 = selectedKeyLSDLines[index2].startPointY;
+                    x2 = selectedKeyLSDLines[index2].endPointX, y2 = selectedKeyLSDLines[index2].endPointY;
+                    disToStart = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+                    disToEnd = sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+                    disTo2EndPoints = disToStart + disToEnd;
+                    if (disToStart <= disToLineThres || disToEnd <= disToLineThres ||
+                        disTo2EndPoints <= disTo2EndsThres) {
+                        imgKeyPoint[i].index2line = index2;
+                    }
+                } else {
+                    if (index3 > -1) {
+                        ///Candidate 2 --- distance to each endpoints and sum up
+                        x1 = selectedKeyLSDLines[index3].startPointX, y1 = selectedKeyLSDLines[index3].startPointY;
+                        x2 = selectedKeyLSDLines[index3].endPointX, y2 = selectedKeyLSDLines[index3].endPointY;
+                        disToStart = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+                        disToEnd = sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+                        disTo2EndPoints = disToStart + disToEnd;
+                        if (disToStart <= disToLineThres || disToEnd <= disToLineThres ||
+                            disTo2EndPoints <= disTo2EndsThres) {
+                            imgKeyPoint[i].index2line = index3;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ///Step 2 pair up LSD lines and lidar points
+    //vector<int> lidarPt2LSD(LiDAR2d.size(), -1);
+    for (int i = 0; i < LiDAR2d.size(); i++) {
+        float x0 = LiDAR2d[i].x, y0 = LiDAR2d[i].y;
+        ///Step 2.1 search for 3 nearest lines first
+        float minDistance1 = 5, minDistance2 = 5, minDistance3 = 5;
+        LiDAR2d[i].index2line = -1;
+        int index1 = -1, index2 = -1, index3 = -1;
+        for (int j = 0; j < selectedKeyLSDLines.size(); j++) {
+            ///Step 1.1 point to line --- d = abs(Ax0+By0+C) / abs(sqrt(A^2+B^2))
+            float A = keyLineABCs[j][0], B = keyLineABCs[j][1], C = keyLineABCs[j][2];
+            float dis = abs(A * x0 + B * y0 + C) /
+                        sqrt(A * A + B * B);
+            if (dis < minDistance1) {
+                minDistance3 = minDistance2;
+                index3 = index2;
+                minDistance2 = minDistance1;
+                index2 = index1;
+                minDistance1 = dis;
+                index1 = j;
+            } else {
+                if (dis >= minDistance1 && dis < minDistance2) {
+                    minDistance3 = minDistance2;
+                    index3 = index2;
+                    minDistance2 = dis;
+                    index2 = j;
+                } else {
+                    if (dis >= minDistance2 && dis < minDistance3) {
+                        minDistance3 = dis;
+                        index3 = j;
+                    }
+                }
+            }
+        }
+        ///Step 2.2 LiDAR point distance to each LSD endpoints
+        float disToLineThres = 3; //? not in use current because above 3 line is qualified already
+        float disTo2EndsThres = 1;
+        ///Candidate 1 --- distance to each endpoints and sum up
+        float x1 = selectedKeyLSDLines[index1].startPointX, y1 = selectedKeyLSDLines[index1].startPointY;
+        float x2 = selectedKeyLSDLines[index1].endPointX, y2 = selectedKeyLSDLines[index1].endPointY;
+        float disToStart = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+        float disToEnd = sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+        float disTo2EndPoints = disToStart + disToEnd;
+        if (disToStart <= disToLineThres || disToEnd <= disToLineThres || disTo2EndPoints <= disTo2EndsThres) {
+            LiDAR2d[i].index2line = index1;
+        } else {
+            if (index2 > -1) {
+                ///Candidate 2 --- distance to each endpoints and sum up
+                x1 = selectedKeyLSDLines[index2].startPointX, y1 = selectedKeyLSDLines[index2].startPointY;
+                x2 = selectedKeyLSDLines[index2].endPointX, y2 = selectedKeyLSDLines[index2].endPointY;
+                disToStart = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+                disToEnd = sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+                disTo2EndPoints = disToStart + disToEnd;
+                if (disToStart <= disToLineThres || disToEnd <= disToLineThres ||
+                    disTo2EndPoints <= disTo2EndsThres) {
+                    LiDAR2d[i].index2line = index2;
+                }
+            } else {
+                if (index3 > -1) {
+                    ///Candidate 2 --- distance to each endpoints and sum up
+                    x1 = selectedKeyLSDLines[index3].startPointX, y1 = selectedKeyLSDLines[index3].startPointY;
+                    x2 = selectedKeyLSDLines[index3].endPointX, y2 = selectedKeyLSDLines[index3].endPointY;
+                    disToStart = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+                    disToEnd = sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2));
+                    disTo2EndPoints = disToStart + disToEnd;
+                    if (disToStart <= disToLineThres || disToEnd <= disToLineThres ||
+                        disTo2EndPoints <= disTo2EndsThres) {
+                        LiDAR2d[i].index2line = index3;
+                    }
+                }
+            }
+        }
+    }
+    for(int i = 0; i < keyLineABCs.size();i++){
+        keyLineABCs[i].clear();
+    }
+    keyLineABCs.clear();
+}
